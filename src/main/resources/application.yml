@@ -1,0 +1,59 @@
+spring:
+  application:
+    name: lexiforge
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/lexiforge}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:postgres}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc.time_zone: UTC
+  flyway:
+    enabled: true
+  ai:
+    model:
+      chat: ${AI_CHAT_PROVIDER:none}
+    openai:
+      base-url: ${AI_BASE_URL:https://api.openai.com}
+      api-key: ${AI_API_KEY:disabled}
+      chat:
+        options:
+          model: ${AI_MODEL:gpt-4o-mini}
+          temperature: 0.2
+
+server:
+  port: ${SERVER_PORT:8080}
+
+app:
+  frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
+  snowflake:
+    datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}
+    worker-id: ${SNOWFLAKE_WORKER_ID:0}
+  jwt:
+    secret: ${JWT_SECRET:change-this-development-secret-to-at-least-32-bytes}
+    access-minutes: 30
+    refresh-days: 30
+  ai:
+    enabled: ${AI_ENABLED:false}
+    translation-cache:
+      maximum-size: ${TRANSLATION_CACHE_SIZE:500}
+      ttl: ${TRANSLATION_CACHE_TTL:5m}
+      revision: ${TRANSLATION_CACHE_REVISION:1}
+    provider-structured-output: ${AI_PROVIDER_STRUCTURED_OUTPUT:false}
+  pricing:
+    input-per-million-rmb: ${AI_INPUT_PRICE_RMB:1.0}
+    output-per-million-rmb: ${AI_OUTPUT_PRICE_RMB:4.0}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    org.springframework.ai.chat.client.advisor: DEBUG

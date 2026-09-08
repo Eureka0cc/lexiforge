@@ -1,0 +1,11 @@
+* { box-sizing: border-box; }
+html { color: var(--color-text); background: var(--color-bg-page); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; font-synthesis: none; }
+body { min-width: 320px; margin: 0; background: var(--color-bg-page); }
+button, input, textarea, select { font: inherit; }
+h1, h2, h3, p { overflow-wrap: anywhere; }
+h1, h2, h3 { color: var(--color-text); }
+a { color: var(--color-primary); }
+.mono, .language-code, .term-word { font-family: var(--font-mono); }
+.muted { color: var(--color-text-secondary); }
+.visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
+:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }

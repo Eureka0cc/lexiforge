@@ -1,0 +1,20 @@
+spring:
+  config:
+    activate:
+      on-profile: agnes
+  ai:
+    model:
+      chat: openai
+    openai:
+      base-url: ${AGNES_BASE_URL:https://apihub.agnes-ai.com/v1}
+      api-key: ${AGNES_API_KEY}
+      chat:
+        options:
+          model: ${AGNES_MODEL:agnes-2.0-flash}
+          temperature: 0.2
+          max-tokens: ${AGNES_MAX_TOKENS:1536}
+
+app:
+  ai:
+    enabled: true
+    provider-structured-output: ${AGNES_PROVIDER_STRUCTURED_OUTPUT:true}

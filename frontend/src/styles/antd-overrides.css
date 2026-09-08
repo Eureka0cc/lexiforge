@@ -1,0 +1,7 @@
+.ant-btn, .ant-input, .ant-input-affix-wrapper, .ant-select-selector, .ant-alert, .ant-progress-inner { box-shadow: none !important; }
+.ant-btn-primary:not(:disabled) { border-color: var(--color-primary); background: var(--color-primary); }
+.ant-btn-primary:not(:disabled):hover { border-color: var(--color-primary-hover); background: var(--color-primary-hover); }
+.ant-drawer .ant-drawer-content { background: var(--color-nav); }
+.ant-drawer .ant-drawer-header { border-bottom-color: rgb(255 255 255 / 9%); }
+.ant-drawer .ant-drawer-close { color: #c8cede; }
+.ant-empty-description { color: var(--color-text-secondary) !important; }

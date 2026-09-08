@@ -1,0 +1,10 @@
+spring:
+  config:
+    activate:
+      on-profile: dev
+app:
+  development-subscriptions: true
+  development-unlimited-usage: true
+logging:
+  level:
+    com.justinsight.lexiforge: DEBUG

@@ -1,0 +1,24 @@
+# Build artifacts
+target/
+node_modules/
+dist/
+
+# Local Maven repository
+.m2/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Environment
+.env
+
+# Local Spring profile with real API keys
+application-local.yml
+
+# Claude Code local settings
+.claude/
+
+# Logs
+*.log
