@@ -14,16 +14,6 @@ spring:
         jdbc.time_zone: UTC
   flyway:
     enabled: true
-  ai:
-    model:
-      chat: ${AI_CHAT_PROVIDER:none}
-    openai:
-      base-url: ${AI_BASE_URL:https://api.openai.com}
-      api-key: ${AI_API_KEY:disabled}
-      chat:
-        options:
-          model: ${AI_MODEL:gpt-4o-mini}
-          temperature: 0.2
 
 server:
   port: ${SERVER_PORT:8080}

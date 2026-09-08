@@ -14,7 +14,7 @@
 
 ## 技术栈
 
-**后端** — Java 21 · Spring Boot 4 · Spring Security (JWT) · Spring AI (OpenAI 兼容网关：DeepSeek / Agnes) · PostgreSQL + Flyway · JPA + JdbcClient
+**后端** — Java 21 · Spring Boot 4 · Spring Security (JWT) · Spring AI (OpenAI 兼容网关) · PostgreSQL + Flyway · JPA + JdbcClient
 
 **前端** — Vue 3 · TypeScript · Vite · Ant Design Vue · Pinia
 
@@ -46,20 +46,21 @@
 
 ### 1. 配置环境变量
 
-参考 `.env.example`：
+以下为本机默认值，按需覆盖：
 
 ```bash
 DB_URL=jdbc:postgresql://localhost:5432/lexiforge
 DB_USERNAME=postgres
 DB_PASSWORD=postgres
 JWT_SECRET=replace-with-at-least-32-random-bytes
-DEEPSEEK_API_KEY=sk-...
 ```
+
+AI 服务连接信息不入库，写在 `src/main/resources/application-local.yml`（已被 Git 忽略），见下文 Profile 说明。
 
 ### 2. 启动后端
 
 ```bash
-mvn spring-boot:run -Dspring-boot.run.profiles=dev,deepseek
+mvn spring-boot:run -Dspring-boot.run.profiles=dev,local
 ```
 
 ### 3. 启动前端
@@ -76,10 +77,8 @@ npm run dev
 
 | Profile | 说明 |
 |---|---|
-| `dev` | 开发默认 |
-| `deepseek` | 接入 DeepSeek 网关（`DEEPSEEK_API_KEY`） |
-| `agnes` | 接入 Agnes AI 网关（`AGNES_API_KEY`） |
-| `local` | 本地私有配置（不入库，自行创建） |
+| `dev` | 开发默认：开发订阅接口、无限用量、DEBUG 日志 |
+| `local` | 本地私有配置（不入库，自行创建）：AI 网关地址、密钥与模型 |
 
 未配置任何 AI key 时服务可正常启动，AI 功能返回 `AI_NOT_CONFIGURED`。
 
