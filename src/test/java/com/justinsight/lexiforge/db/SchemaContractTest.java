@@ -26,4 +26,15 @@ class SchemaContractTest {
             assertThat(sql).doesNotContain("DROP TABLE TRANSLATION", "DROP TABLE VOCABULARY_ITEM");
         }
     }
+
+    @Test void wordDictionaryMigrationIsAdditive() throws Exception {
+        try (var in = getClass().getResourceAsStream("/db/migration/V5__word_dictionary.sql")) {
+            assertThat(in).isNotNull();
+            String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8).toUpperCase();
+            assertThat(sql).contains("CREATE TABLE WORD_DICTIONARY",
+                    "UQ_WORD_DICTIONARY_ENTRY", "IDX_TRANSLATION_WORD_ADMISSION",
+                    "HIT_COUNT", "CONTRIBUTOR_USER_ID");
+            assertThat(sql).doesNotContain("DROP TABLE");
+        }
+    }
 }

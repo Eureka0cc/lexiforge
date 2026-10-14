@@ -34,6 +34,13 @@ app:
       ttl: ${TRANSLATION_CACHE_TTL:5m}
       revision: ${TRANSLATION_CACHE_REVISION:1}
     provider-structured-output: ${AI_PROVIDER_STRUCTURED_OUTPUT:false}
+    word-dictionary:
+      enabled: false
+      min-repeat: ${WORD_DICTIONARY_MIN_REPEAT:2}
+    execution:
+      concurrency: ${AI_CONCURRENCY:20}
+      queue-capacity: ${AI_QUEUE_CAPACITY:40}
+      timeout-seconds: ${AI_TIMEOUT_SECONDS:90}
   pricing:
     input-per-million-rmb: ${AI_INPUT_PRICE_RMB:1.0}
     output-per-million-rmb: ${AI_OUTPUT_PRICE_RMB:4.0}
@@ -42,8 +49,8 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
 
 logging:
   level:
-    org.springframework.ai.chat.client.advisor: DEBUG
+    org.springframework.ai.chat.client.advisor: WARN

@@ -45,6 +45,12 @@
         <dependency><groupId>org.springframework.security</groupId><artifactId>spring-security-test</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes><exclude>application-local.yml</exclude></excludes>
+            </resource>
+        </resources>
         <plugins>
             <plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin>
         </plugins>

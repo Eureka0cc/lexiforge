@@ -15,6 +15,7 @@ import com.justinsight.lexiforge.common.ApiException;
 import com.justinsight.lexiforge.service.EntitlementService;
 import com.justinsight.lexiforge.service.EventService;
 import com.justinsight.lexiforge.service.ai.TranslationCacheService;
+import com.justinsight.lexiforge.service.ai.WordDictionaryService;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
@@ -42,6 +43,7 @@ public class TranslationServiceImpl implements TranslationService {
     private final EventService events;
     private final ObjectMapper objectMapper;
     private final TranslationCacheService cache;
+    private final WordDictionaryService dictionary;
     private final TransactionTemplate transaction;
 
     public TranslationServiceImpl(TranslationRepository translations, TranslationTermRepository terms,
@@ -49,6 +51,7 @@ public class TranslationServiceImpl implements TranslationService {
                                    AiGateway ai, SnowflakeIdGenerator ids,
                                    EntitlementService entitlements, EventService events,
                                    ObjectMapper objectMapper, TranslationCacheService cache,
+                                   WordDictionaryService dictionary,
                                    PlatformTransactionManager transactionManager) {
         this.translations = translations;
         this.terms = terms;
@@ -60,6 +63,7 @@ public class TranslationServiceImpl implements TranslationService {
         this.events = events;
         this.objectMapper = objectMapper;
         this.cache = cache;
+        this.dictionary = dictionary;
         this.transaction = new TransactionTemplate(transactionManager);
     }
 
@@ -75,13 +79,8 @@ public class TranslationServiceImpl implements TranslationService {
             throw new ApiException(HttpStatus.BAD_REQUEST, "SAME_LANGUAGE", "源语言与目标语言不能相同");
         }
         DomainEntity domain = resolveDomain(request.domainId(), userId);
-        List<AiGateway.GlossaryTerm> glossary = domainTerms.findByDomainIdOrderBySourceTerm(domain.id)
-                .stream()
-                .filter(term -> matches(request.sourceText(), term.sourceTerm))
-                .sorted((left, right) -> Integer.compare(right.sourceTerm.length(), left.sourceTerm.length()))
-                .limit(30)
-                .map(term -> new AiGateway.GlossaryTerm(term.sourceTerm, term.targetTerm))
-                .toList();
+        // 术语译法由模型结合语境判断。既有术语表只保留兼容，不注入默认翻译。
+        List<AiGateway.GlossaryTerm> glossary = List.of();
         String fingerprint = cache.fingerprint(userId, request, domain, glossary);
         return cache.exclusive(fingerprint, () -> translateResolved(userId, request, domain, glossary,
                 fingerprint, deltaConsumer));
@@ -114,23 +113,28 @@ public class TranslationServiceImpl implements TranslationService {
             if (result == null || result.translatedText() == null || result.translatedText().isBlank()) {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_INVALID_RESPONSE", "AI 未返回有效译文，请重试");
             }
-            TranslationDto.View saved = transaction.execute(status ->
-                    saveResult(userId, request, domain, result, fingerprint));
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("翻译已取消");
+            TranslationEntity saved = transaction.execute(status ->
+                    persist(userId, request, domain, result, fingerprint, cache.model(), "TRANSLATION_COMPLETED"));
             // Populate only after the database transaction has committed successfully.
-            cache.remember(fingerprint, Long.parseLong(saved.id()));
-            return saved;
+            cache.remember(fingerprint, saved.id);
+            return view(saved, domain.medicalDisclaimer);
         } catch (RuntimeException exception) {
+            boolean interrupted = Thread.interrupted();
             try {
                 entitlements.release(userId, EntitlementService.UsageType.TRANSLATION, usageDate);
             } catch (RuntimeException releaseFailure) {
                 exception.addSuppressed(releaseFailure);
+            } finally {
+                if (interrupted) Thread.currentThread().interrupt();
             }
             throw exception;
         }
     }
 
-    private TranslationDto.View saveResult(long userId, TranslationDto.Request request, DomainEntity domain,
-                                           AiGateway.TranslationResult result, String fingerprint) {
+    private TranslationEntity persist(long userId, TranslationDto.Request request, DomainEntity domain,
+                                      AiGateway.TranslationResult result, String fingerprint,
+                                      String modelVersion, String eventName) {
         TranslationEntity entity = new TranslationEntity();
         entity.id = ids.nextId();
         entity.userId = userId;
@@ -143,12 +147,12 @@ public class TranslationServiceImpl implements TranslationService {
         entity.context = request.context();
         entity.alternativesJson = writeAlternatives(result.alternatives());
         entity.promptVersion = TranslationCacheService.PROMPT_VERSION;
-        entity.modelVersion = cache.model();
+        entity.modelVersion = modelVersion;
         entity.requestFingerprint = fingerprint;
         translations.save(entity);
-        events.track(userId, "TRANSLATION_COMPLETED",
+        events.track(userId, eventName,
                 "{\"domain\":\"" + (domain.code == null ? "CUSTOM" : domain.code) + "\"}");
-        return view(entity, domain.medicalDisclaimer);
+        return entity;
     }
 
     @Override

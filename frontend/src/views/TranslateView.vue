@@ -6,6 +6,7 @@ import { CopyOutlined, HistoryOutlined, ReloadOutlined, SettingOutlined, SwapOut
 import { api, postSse } from '../api'
 import type { Domain, Lookup, LookupDetails, Translation } from '../types'
 import DocumentPane from '../components/translation/DocumentPane.vue'
+import { createFrameText } from '../lib/frameText'
 
 type Side = 'SOURCE' | 'TARGET'
 type MobileTab = 'source' | 'result'
@@ -44,6 +45,10 @@ let timer: ReturnType<typeof setTimeout> | null = null
 let controller: AbortController | null = null
 let version = 0
 let suppressWatch = false
+const displayBuffer = createFrameText(text => {
+  stale.value = false
+  streamedText.value += text
+})
 
 const chars = computed(() => source.value.length)
 const visibleTranslation = computed(() => streamedText.value || result.value?.translatedText || '')
@@ -58,6 +63,7 @@ onBeforeUnmount(invalidate)
 watch([source, sourceLanguage, targetLanguage, domainId], () => {
   if (suppressWatch) return
   version += 1
+  displayBuffer.clear()
   controller?.abort()
   controller = null
   translating.value = false
@@ -111,6 +117,7 @@ async function translate(forceRefresh = false) {
   if (!validInput()) return
   controller?.abort()
   const ownVersion = ++version
+  displayBuffer.clear()
   const aborter = new AbortController()
   controller = aborter
   lookup.value = null
@@ -124,8 +131,9 @@ async function translate(forceRefresh = false) {
   try {
     await postSse('/api/translations/stream/v1', payload, aborter.signal, ({ event, data }) => {
       if (ownVersion !== version) return
-      if (event === 'delta') { stale.value = false; streamedText.value += (data as { text: string }).text }
+      if (event === 'delta') displayBuffer.append((data as { text: string }).text)
       if (event === 'completed') {
+        displayBuffer.flush()
         const translated = (data as { translation: Translation }).translation
         result.value = translated
         streamedText.value = translated.translatedText
@@ -141,9 +149,11 @@ async function translate(forceRefresh = false) {
     if (ownVersion !== version || aborter.signal.aborted) return
     if (forceRefresh && result.value) streamedText.value = result.value.translatedText
     translationError.value = error instanceof Error ? error.message : '翻译未完成，请稍后重试'
-  } finally { if (ownVersion === version) translating.value = false }
+  } finally { if (ownVersion === version) { displayBuffer.flush(); translating.value = false } }
 }
 function stop() {
+  clearTimer()
+  displayBuffer.flush()
   stopped.value = true
   version += 1
   controller?.abort()
@@ -151,7 +161,7 @@ function stop() {
   translating.value = false
   if (streamedText.value) translationError.value = '翻译已停止，当前内容未完成，不能查词或收藏'
 }
-function invalidate() { clearTimer(); version += 1; controller?.abort(); controller = null }
+function invalidate() { clearTimer(); displayBuffer.clear(); version += 1; controller?.abort(); controller = null }
 function compositionStart() { composing.value = true; clearTimer(); lookup.value = null }
 function compositionEnd() { composing.value = false; schedule() }
 function swapLanguages() {
@@ -284,7 +294,7 @@ async function copyTranslation() {
       </div>
       <div class="toolbar-actions">
         <span>停止输入 900ms 后自动翻译</span>
-        <a-button @click="router.push('/domains')"><SettingOutlined />领域术语</a-button>
+        <a-button @click="router.push('/domains')"><SettingOutlined />翻译场景</a-button>
         <a-button v-if="translating" danger @click="stop">停止</a-button>
         <a-button v-else type="primary" :disabled="!source.trim() || !domainId || sourceLanguage === targetLanguage" @click="translate(false)"><TranslationOutlined />立即翻译</a-button>
         <a-button v-if="result && !translating" :disabled="stale || !source.trim() || !domainId || sourceLanguage === targetLanguage" title="忽略已有结果，重新调用 AI；成功后计入翻译额度" @click="translate(true)"><ReloadOutlined />重新翻译</a-button>
@@ -308,7 +318,7 @@ async function copyTranslation() {
           <div v-if="result?.alternatives?.length && !stale && !translating" class="alternatives"><strong>其他可能含义</strong><div v-for="item in result.alternatives" :key="item.meaning">{{ item.meaning }}<small v-if="item.note"> — {{ item.note }}</small></div></div>
         </article>
         <div v-else class="result-state"><TranslationOutlined /><strong>{{ translating ? '正在连接翻译服务…' : '译文将在这里显示' }}</strong></div>
-        <template #footer><span>{{ translating ? '正在翻译' : result && !stale ? '完成 · 可点击或划选查词' : '等待翻译' }}</span></template>
+        <template #footer><span>{{ translating ? '正在翻译' : canLookup ? '完成 · 可点击或划选查词' : translationError ? '未完成' : '等待翻译' }}</span></template>
       </DocumentPane>
     </div>
   </section>

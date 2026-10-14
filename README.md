@@ -1,10 +1,20 @@
 # LeXiForge
 
+## 商用化实施（2026-10-14）
+
+完整范围与验收目标见 [开发验收计划](docs/COMMERCIALIZATION_PLAN.md)，当前证据见 [实施台账](docs/IMPLEMENTATION_STATUS.md)。支付只做 Sandbox，真实收费未开放。
+
+默认翻译不注入预设术语映射、不跨用户共享生成结果；个人历史同条件复用保留。普通与流式翻译采用同一语境策略。受控生成并发默认 20、排队 40，上游整体超时 90 秒，可用 `AI_CONCURRENCY`、`AI_QUEUE_CAPACITY`、`AI_TIMEOUT_SECONDS` 调整。
+
+管理员可在 `/actuator/metrics` 查询 `lexiforge.translation.queue`、`lexiforge.translation.first_delta`、`lexiforge.translation.duration` 和 `lexiforge.translation.rejected`。缓存没有首字样本；真实模型质量与速度不能由单元测试推断。
+
+本地 AI 配置在 `dev,local` 下通过外部文件导入。Maven 资源排除 `application-local.yml`，部署须显式提供外部配置。验证命令：后端 `mvn -B clean test`，前端 `npm run test`、`npm run build`。
+
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
 ## 功能特性
 
-- **AI 流式翻译** — 流式输出（SSE）、自定义领域术语表、多版本备选译文；基于请求指纹的结果复用，相同请求不重复计费
+- **AI 流式翻译** — 流式输出（SSE）、自定义场景、必要的歧义解释；基于个人请求指纹的结果复用，相同请求不重复扣额度
 - **选区查词** — 在译文或原文中选中任意词组，AI 解析词义、音标、例句，一键收入词库
 - **生词本 + 间隔重复复习** — SM-2 风格调度算法（EN↔ZH 双向），支持本地精确判分 + AI 语义判分级联
 - **易混词组** — 归纳易混淆词汇，AI 生成多版本记忆法（口号 / 视觉钩子 / IT 类比 / 对比示例）

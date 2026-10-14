@@ -21,6 +21,9 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ApiResponse<Void>> api(ApiException ex, HttpServletRequest request) {
+        if (ex.status().is5xxServerError()) {
+            log.warn("Gateway failure {}: {} requestId={}", ex.code(), ex.getMessage(), requestId(request), ex);
+        }
         return ResponseEntity.status(ex.status()).body(error(ex.code(), ex.getMessage(), Map.of(), request));
     }
 

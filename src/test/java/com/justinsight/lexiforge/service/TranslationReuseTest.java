@@ -10,6 +10,7 @@ import com.justinsight.lexiforge.repository.DomainTermRepository;
 import com.justinsight.lexiforge.repository.TranslationRepository;
 import com.justinsight.lexiforge.repository.TranslationTermRepository;
 import com.justinsight.lexiforge.service.ai.TranslationCacheService;
+import com.justinsight.lexiforge.service.ai.WordDictionaryService;
 import com.justinsight.lexiforge.service.ai.impl.TranslationCacheServiceImpl;
 import com.justinsight.lexiforge.service.ai.provider.AiGateway;
 import com.justinsight.lexiforge.service.impl.TranslationServiceImpl;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -48,6 +50,7 @@ class TranslationReuseTest {
     private final EntitlementService entitlements = mock(EntitlementService.class);
     private final EventService events = mock(EventService.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
+    private final WordDictionaryService dictionary = mock(WordDictionaryService.class);
     private final ObjectMapper mapper = new ObjectMapper();
     private final DomainEntity domain = new DomainEntity();
     private final TranslationDto.Request request = new TranslationDto.Request("address", "EN", "ZH", "10", null, false);
@@ -158,6 +161,67 @@ class TranslationReuseTest {
         }
     }
 
+    @Test
+    void sharedDictionaryCannotReplaceContextualModelTranslation() {
+        when(dictionary.lookup(any(), any(), any())).thenReturn(Optional.of(dictHit()));
+        TranslationDto.View view = service.translate(1, request);
+        assertThat(view.translatedText()).isEqualTo("地址");
+        assertThat(view.id()).isEqualTo("100");
+        verify(ai).translateStream(any(), any());
+        verify(entitlements).consume(anyLong(), any(), any());
+        verify(translations).save(any());
+        verify(events).track(eq(1L), eq("TRANSLATION_COMPLETED"), any());
+        verify(dictionary, never()).lookup(any(), any(), any());
+        verify(dictionary, never()).registerHit(anyLong());
+        verify(dictionary, never()).admit(any(), any(), any(), any());
+        assertThat(cache.find(fingerprint)).isEqualTo(100L);
+    }
+
+    @Test
+    void dictionaryHitIsThenServedByFingerprintOnRepeat() {
+        when(dictionary.lookup(any(), any(), any())).thenReturn(Optional.of(dictHit()));
+        when(translations.findByIdAndUserId(100L, 1L)).thenReturn(Optional.of(saved(100)));
+        assertThat(service.translate(1, request).id()).isEqualTo("100");
+        assertThat(service.translate(1, request).id()).isEqualTo("100");
+        verify(dictionary, never()).lookup(any(), any(), any());
+        verify(translations, times(1)).save(any());
+    }
+
+    @Test
+    void registerHitFailureDoesNotBreakDictionaryHit() {
+        when(dictionary.lookup(any(), any(), any())).thenReturn(Optional.of(dictHit()));
+        doThrow(new IllegalStateException("counter failed")).when(dictionary).registerHit(5L);
+        assertThat(service.translate(1, request).translatedText()).isEqualTo("地址");
+    }
+
+    @Test
+    void forceRefreshDoesNotShareUserGeneratedTranslation() {
+        when(dictionary.lookup(any(), any(), any())).thenReturn(Optional.of(dictHit()));
+        var refresh = new TranslationDto.Request("address", "EN", "ZH", "10", null, false, true);
+        assertThat(service.translate(1, refresh).id()).isEqualTo("100");
+        verify(ai).translateStream(any(), any());
+        verify(dictionary, never()).registerHit(anyLong());
+        verify(dictionary, never()).admit(any(), any(), any(), any());
+    }
+
+    @Test
+    void admissionFailureDoesNotFailTranslation() {
+        doThrow(new IllegalStateException("admission failed")).when(dictionary).admit(any(), any(), any(), any());
+        assertThat(service.translate(1, request).translatedText()).isEqualTo("地址");
+        verify(entitlements, never()).release(anyLong(), any(), any());
+    }
+
+    @Test
+    void defaultTranslationDoesNotReadOrInjectHardcodedGlossary() {
+        service.translate(1, request);
+        verify(domainTerms, never()).findByDomainIdOrderBySourceTerm(anyLong());
+        verify(ai).translateStream(org.mockito.ArgumentMatchers.argThat(prompt -> prompt.glossary().isEmpty()), any());
+    }
+
+    private WordDictionaryService.DictionaryHit dictHit() {
+        return new WordDictionaryService.DictionaryHit(5L, "address", "EN", "地址", "en", List.of(), "test-model");
+    }
+
     private TranslationEntity saved(long id) {
         TranslationEntity saved = new TranslationEntity();
         saved.id = id;
@@ -175,6 +239,6 @@ class TranslationReuseTest {
 
     private TranslationService newService(TranslationCacheService value) {
         return new TranslationServiceImpl(translations, terms, domains, domainTerms, ai, ids,
-                entitlements, events, mapper, value, manager);
+                entitlements, events, mapper, value, dictionary, manager);
     }
 }

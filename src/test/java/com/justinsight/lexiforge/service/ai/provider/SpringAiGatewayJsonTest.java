@@ -11,7 +11,7 @@ class SpringAiGatewayJsonTest {
     void keepsSingleWordTranslationsSmallAndFast() {
         var strategy = TranslationRequestStrategy.select("address");
         assertThat(strategy.kind()).isEqualTo(TranslationRequestStrategy.Kind.FAST);
-        assertThat(strategy.maxOutputTokens()).isEqualTo(384);
+        assertThat(strategy.maxOutputTokens()).isEqualTo(896);
         assertThat(strategy.termLimit()).isEqualTo(1);
     }
 
@@ -27,7 +27,7 @@ class SpringAiGatewayJsonTest {
     void translationOnlyDoesNotBudgetForLearningContent() {
         var strategy = TranslationRequestStrategy.select("an unfamiliar word", false);
         assertThat(strategy.termLimit()).isZero();
-        assertThat(strategy.maxOutputTokens()).isEqualTo(128);
+        assertThat(strategy.maxOutputTokens()).isEqualTo(640);
     }
 
     @Test

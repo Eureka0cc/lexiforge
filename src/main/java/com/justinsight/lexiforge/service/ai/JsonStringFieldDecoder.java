@@ -1,62 +1,90 @@
 package com.justinsight.lexiforge.service.ai;
 
-/** Incrementally exposes only complete decoded characters from one JSON string field. */
+/** 单次扫描增量 JSON，仅暴露顶层指定字符串，保持转义与 Unicode 字符完整。 */
 public final class JsonStringFieldDecoder {
     private final String field;
-    private final StringBuilder json = new StringBuilder();
-    private int emitted;
+    private final StringBuilder token = new StringBuilder();
+    private int depth;
+    private boolean inString, escape, expectingKey, expectingValue, keyToken, capture, captured;
+    private int unicodeDigits, unicodeValue;
+    private String key;
+    private char highSurrogate;
 
-    public JsonStringFieldDecoder(String field) {
-        this.field = field;
-    }
+    public JsonStringFieldDecoder(String field) { this.field = field; }
 
     public String accept(String chunk) {
-        if (chunk != null) json.append(chunk);
-        String decoded = decodeAvailable(json, field);
-        if (decoded.length() <= emitted) return "";
-        String delta = decoded.substring(emitted);
-        emitted = decoded.length();
-        return delta;
-    }
-
-    private static String decodeAvailable(CharSequence json, String field) {
-        String needle = "\"" + field + "\"";
-        int key = json.toString().indexOf(needle);
-        if (key < 0) return "";
-        int cursor = key + needle.length();
-        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) cursor++;
-        if (cursor >= json.length() || json.charAt(cursor++) != ':') return "";
-        while (cursor < json.length() && Character.isWhitespace(json.charAt(cursor))) cursor++;
-        if (cursor >= json.length() || json.charAt(cursor++) != '"') return "";
-        StringBuilder value = new StringBuilder();
-        while (cursor < json.length()) {
-            char current = json.charAt(cursor++);
-            if (current == '"') break;
-            if (current != '\\') {
-                value.append(current);
+        StringBuilder delta = new StringBuilder();
+        if (chunk == null) return "";
+        for (int index = 0; index < chunk.length(); index++) {
+            char ch = chunk.charAt(index);
+            if (inString) {
+                if (unicodeDigits > 0) {
+                    int digit = Character.digit(ch, 16);
+                    if (digit < 0) throw new IllegalArgumentException("无效 Unicode 转义");
+                    unicodeValue = unicodeValue * 16 + digit;
+                    if (--unicodeDigits == 0) append((char) unicodeValue, delta);
+                } else if (escape) {
+                    escape = false;
+                    switch (ch) {
+                        case 'u' -> { unicodeDigits = 4; unicodeValue = 0; }
+                        case '"', '\\', '/' -> append(ch, delta);
+                        case 'n' -> append('\n', delta);
+                        case 'r' -> append('\r', delta);
+                        case 't' -> append('\t', delta);
+                        case 'b' -> append('\b', delta);
+                        case 'f' -> append('\f', delta);
+                        default -> throw new IllegalArgumentException("无效 JSON 转义");
+                    }
+                } else if (ch == '\\') {
+                    escape = true;
+                } else if (ch == '"') {
+                    if (highSurrogate != 0) throw new IllegalArgumentException("不完整 Unicode 字符");
+                    inString = false;
+                    if (keyToken) { key = token.toString(); expectingKey = false; }
+                    else if (depth == 1) expectingValue = false;
+                    if (capture) captured = true;
+                    capture = false;
+                } else {
+                    if (ch < 0x20) throw new IllegalArgumentException("未转义的控制字符");
+                    append(ch, delta);
+                }
                 continue;
             }
-            if (cursor >= json.length()) break;
-            char escape = json.charAt(cursor++);
-            switch (escape) {
-                case '"', '\\', '/' -> value.append(escape);
-                case 'b' -> value.append('\b');
-                case 'f' -> value.append('\f');
-                case 'n' -> value.append('\n');
-                case 'r' -> value.append('\r');
-                case 't' -> value.append('\t');
-                case 'u' -> {
-                    if (cursor + 4 > json.length()) return value.toString();
-                    try {
-                        value.append((char) Integer.parseInt(json.subSequence(cursor, cursor + 4).toString(), 16));
-                    } catch (NumberFormatException ignored) {
-                        return value.toString();
-                    }
-                    cursor += 4;
-                }
-                default -> { return value.toString(); }
+            if (ch == '"') {
+                inString = true;
+                keyToken = depth == 1 && expectingKey;
+                capture = depth == 1 && expectingValue && field.equals(key);
+                if (capture && captured) throw new IllegalArgumentException("重复译文字段");
+                token.setLength(0);
+            } else if (ch == '{' || ch == '[') {
+                depth++;
+                if (depth == 1) expectingKey = true;
+            } else if (ch == '}' || ch == ']') {
+                depth--;
+                if (depth < 0) throw new IllegalArgumentException("无效 JSON 结构");
+            } else if (depth == 1 && ch == ':') {
+                expectingValue = true;
+            } else if (depth == 1 && ch == ',') {
+                expectingKey = true;
+                expectingValue = false;
+                key = null;
             }
         }
-        return value.toString();
+        return delta.toString();
+    }
+
+    private void append(char ch, StringBuilder delta) {
+        if (keyToken) { token.append(ch); return; }
+        if (!capture) return;
+        if (highSurrogate != 0) {
+            if (!Character.isLowSurrogate(ch)) throw new IllegalArgumentException("无效 Unicode 字符");
+            delta.append(highSurrogate).append(ch);
+            highSurrogate = 0;
+        } else if (Character.isHighSurrogate(ch)) {
+            highSurrogate = ch;
+        } else {
+            if (Character.isLowSurrogate(ch)) throw new IllegalArgumentException("无效 Unicode 字符");
+            delta.append(ch);
+        }
     }
 }

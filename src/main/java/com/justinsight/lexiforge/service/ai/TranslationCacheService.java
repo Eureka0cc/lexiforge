@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.function.Supplier;
 
 public interface TranslationCacheService {
-    String PROMPT_VERSION = "translation-stream-v2";
+    String PROMPT_VERSION = "translation-context-v3";
 
     String model();
 

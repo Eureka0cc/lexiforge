@@ -48,7 +48,7 @@ class DeepSeekGatewayTest {
             assertThat(json.path("model").asText()).isEqualTo("deepseek-v4-pro");
             assertThat(json.path("thinking").path("type").asText()).isEqualTo("disabled");
             assertThat(json.path("response_format").path("type").asText()).isEqualTo("json_object");
-            assertThat(json.path("max_tokens").asInt()).isEqualTo(128);
+            assertThat(json.path("max_tokens").asInt()).isEqualTo(640);
             assertThat(json.path("messages").toString()).contains("We need to address this issue.");
             assertThat(json.path("messages").get(0).path("content").asText())
                     .doesNotContain("farm", "address");

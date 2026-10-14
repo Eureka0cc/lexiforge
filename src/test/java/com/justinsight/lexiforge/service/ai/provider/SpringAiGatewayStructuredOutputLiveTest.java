@@ -45,10 +45,7 @@ class SpringAiGatewayStructuredOutputLiveTest {
 
     private static SpringAiGateway gateway() throws IOException {
         String yaml;
-        try (var input = SpringAiGatewayStructuredOutputLiveTest.class.getResourceAsStream("/application-local.yml")) {
-            assertThat(input).isNotNull();
-            yaml = new String(input.readAllBytes(), StandardCharsets.UTF_8);
-        }
+        yaml = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/application-local.yml"), StandardCharsets.UTF_8);
         var baseUrl = match(yaml, BASE_URL);
         var apiKey = match(yaml, API_KEY);
         var model = match(yaml, MODEL);

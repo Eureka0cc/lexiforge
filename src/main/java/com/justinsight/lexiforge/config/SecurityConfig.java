@@ -2,6 +2,7 @@ package com.justinsight.lexiforge.config;
 
 import com.justinsight.lexiforge.security.JwtAuthenticationFilter;
 import com.justinsight.lexiforge.common.ApiResponse;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -44,8 +45,10 @@ public class SecurityConfig {
                                     request.getHeader("X-Request-Id"));
                         }))
                 .authorizeHttpRequests(a -> a
+                        .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers("/api/auth/**", "/api/plans/v1", "/actuator/health").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated())
                 .addFilterBefore(jwt, UsernamePasswordAuthenticationFilter.class).build();

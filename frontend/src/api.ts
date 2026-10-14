@@ -1,5 +1,7 @@
 import axios from 'axios'
 import { message } from 'ant-design-vue'
+import { readSseStream, type SseMessage } from './lib/sse'
+export type { SseMessage } from './lib/sse'
 
 interface ApiResponse<T> {
   success: boolean
@@ -12,7 +14,21 @@ interface ApiResponse<T> {
 
 export const api=axios.create({baseURL:'',withCredentials:true,timeout:45000})
 api.interceptors.request.use(config=>{const token=localStorage.getItem('access_token');if(token)config.headers.Authorization=`Bearer ${token}`;return config})
-let refreshing=false
+let refreshPromise: Promise<void> | null = null
+export function refreshSession() {
+  if (!refreshPromise) {
+    refreshPromise = api.post('/api/auth/refresh/v1').then(({ data }) => {
+      localStorage.setItem('access_token', data.accessToken)
+      localStorage.setItem('user', JSON.stringify(data.user))
+    }).catch(error => {
+      localStorage.removeItem('access_token')
+      localStorage.removeItem('user')
+      location.href = '/login'
+      throw error
+    }).finally(() => { refreshPromise = null })
+  }
+  return refreshPromise
+}
 api.interceptors.response.use(response=>{
   const body=response.data as ApiResponse<unknown>
   if(body&&typeof body==='object'&&typeof body.success==='boolean'&&'data'in body)response.data=body.data
@@ -21,7 +37,7 @@ api.interceptors.response.use(response=>{
   const original=error.config
   if(error.response?.status===401&&!original?._retry&&!original?.url?.includes('/auth/')){
     original._retry=true
-    if(!refreshing){refreshing=true;try{const {data}=await api.post('/api/auth/refresh/v1');localStorage.setItem('access_token',data.accessToken);localStorage.setItem('user',JSON.stringify(data.user))}catch{localStorage.clear();location.href='/login'}finally{refreshing=false}}
+    await refreshSession()
     return api(original)
   }
   const text=!error.response
@@ -31,29 +47,31 @@ api.interceptors.response.use(response=>{
   return Promise.reject(error)
 })
 
-export interface SseMessage {
-  event: string
-  data: unknown
-}
-
 export async function postSse(
   url: string,
   body: unknown,
   signal: AbortSignal,
   onMessage: (message: SseMessage) => void,
 ) {
-  const token = localStorage.getItem('access_token')
-  const response = await fetch(url, {
+  const send = () => fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
       'Content-Type': 'application/json',
       Accept: 'text/event-stream',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(localStorage.getItem('access_token') ? { Authorization: `Bearer ${localStorage.getItem('access_token')}` } : {}),
     },
     body: JSON.stringify(body),
     signal,
   })
+  let response = await send()
+  // HTTP 401 表示尚未开始生成，只允许在此时续期并重发一次。
+  if (response.status === 401) {
+    await response.body?.cancel()
+    await refreshSession()
+    signal.throwIfAborted()
+    response = await send()
+  }
   if (!response.ok || !response.body) {
     let reason = `请求失败（${response.status}）`
     try {
@@ -63,25 +81,5 @@ export async function postSse(
     throw new Error(reason)
   }
 
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  while (true) {
-    const { value, done } = await reader.read()
-    buffer += decoder.decode(value, { stream: !done }).replace(/\r\n/g, '\n')
-    let boundary = buffer.indexOf('\n\n')
-    while (boundary >= 0) {
-      const block = buffer.slice(0, boundary)
-      buffer = buffer.slice(boundary + 2)
-      let event = 'message'
-      const data: string[] = []
-      for (const line of block.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        if (line.startsWith('data:')) data.push(line.slice(5).trimStart())
-      }
-      if (data.length) onMessage({ event, data: JSON.parse(data.join('\n')) })
-      boundary = buffer.indexOf('\n\n')
-    }
-    if (done) break
-  }
+  await readSseStream(response.body, onMessage)
 }
