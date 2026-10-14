@@ -58,7 +58,8 @@ public class TranslationCacheServiceImpl implements TranslationCacheService {
                               List<AiGateway.GlossaryTerm> glossary) {
         String input = mapper.writeValueAsString(List.of(userId, request.sourceText(),
                 request.sourceLanguage(), request.targetLanguage(), value(request.context()),
-                domain.id, value(domain.name), value(domain.description),
+                domain.id == null ? 0L : domain.id, value(domain.name), value(domain.description),
+                value(domain.configurationJson), domain.revision, value(domain.configurationVersion),
                 domain.updatedAt == null ? "" : domain.updatedAt.toString(), glossary,
                 providerIdentity, PROMPT_VERSION));
         try {

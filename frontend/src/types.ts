@@ -22,6 +22,25 @@ export interface Domain {
   builtIn: boolean
   medicalDisclaimer: boolean
   terms: DomainTerm[]
+  configuration?: SceneConfig | null
+  revision: number
+  configurationVersion?: string
+}
+
+export interface SceneConfig {
+  domain: string
+  documentType: string
+  audience: string
+  style: string
+  preserveRules: string[]
+  explanationPreference: string
+}
+export interface SceneDraft {
+  id: SnowflakeId
+  name: string
+  description: string
+  configuration: SceneConfig
+  generationVersion: string
 }
 
 export interface TranslationTerm {
@@ -36,7 +55,7 @@ export interface TranslationTerm {
 
 export interface Translation {
   id: SnowflakeId
-  domainId: SnowflakeId
+  domainId: SnowflakeId | null
   sourceLanguage: string
   targetLanguage: string
   detectedLanguage: string
@@ -46,6 +65,8 @@ export interface Translation {
   createdAt: string
   terms: TranslationTerm[]
   alternatives: { meaning: string; note?: string }[]
+  sceneRevision?: number | null
+  sceneSnapshot?: { name: string; description: string; configuration?: SceneConfig | null; revision: number; medicalDisclaimer: boolean } | null
 }
 
 export interface Lookup {

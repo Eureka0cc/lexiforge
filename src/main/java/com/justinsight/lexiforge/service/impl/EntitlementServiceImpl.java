@@ -62,12 +62,14 @@ public class EntitlementServiceImpl implements EntitlementService {
             case LOOKUP -> "lookup_count";
             case GRADING -> "grading_count";
             case MNEMONIC -> "mnemonic_count";
+            case SCENE_GENERATION -> "scene_generation_count";
         };
         int limit = switch (type) {
             case TRANSLATION -> plan.translationLimit();
             case LOOKUP -> plan.translationLimit() * 5;
             case GRADING -> plan.gradingLimit();
             case MNEMONIC -> plan.mnemonicLimit();
+            case SCENE_GENERATION -> sceneLimit(plan);
         };
         int updated;
         if (unlimitedUsage) {
@@ -94,6 +96,7 @@ public class EntitlementServiceImpl implements EntitlementService {
             case LOOKUP -> "lookup_count";
             case GRADING -> "grading_count";
             case MNEMONIC -> "mnemonic_count";
+            case SCENE_GENERATION -> "scene_generation_count";
         };
         jdbc.sql("UPDATE daily_usage SET " + column + "=GREATEST(0," + column +
                         "-1) WHERE user_id=:uid AND usage_date=:day")
@@ -104,13 +107,16 @@ public class EntitlementServiceImpl implements EntitlementService {
     public Usage usage(long userId) {
         Plan plan = plan(userId);
         LocalDate date = LocalDate.now(ZONE);
-        var rows = jdbc.sql("SELECT translation_count,lookup_count,grading_count,mnemonic_count " +
+        var rows = jdbc.sql("SELECT translation_count,lookup_count,grading_count,mnemonic_count,scene_generation_count " +
                         "FROM daily_usage WHERE user_id=:uid AND usage_date=:d")
                 .param("uid", userId).param("d", date).query().listOfRows();
         Map<String, Object> row = rows.isEmpty() ? Map.of() : rows.getFirst();
         return new Usage(plan, number(row, "translation_count"), number(row, "lookup_count"), number(row, "grading_count"),
-                number(row, "mnemonic_count"), date.plusDays(1).atStartOfDay(ZONE).toInstant().toString());
+                number(row, "mnemonic_count"), number(row, "scene_generation_count"), sceneLimit(plan),
+                date.plusDays(1).atStartOfDay(ZONE).toInstant().toString());
     }
+
+    private int sceneLimit(Plan plan) { return "PRO".equals(plan.code()) ? 50 : 10; }
 
     private int number(Map<String, Object> row, String key) {
         Object value = row.get(key);

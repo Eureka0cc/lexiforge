@@ -218,6 +218,42 @@ class TranslationReuseTest {
         verify(ai).translateStream(org.mockito.ArgumentMatchers.argThat(prompt -> prompt.glossary().isEmpty()), any());
     }
 
+    @Test
+    void configuredSceneIsLoadedWithoutAnotherModelOperationAndSnapshotIsImmutable() {
+        var config = new com.justinsight.lexiforge.model.dto.SceneDto.Config("嵌入式", "数据手册", "工程师", "简洁严谨",
+                List.of("保留寄存器名称"), "不额外解释");
+        domain.configurationJson = com.justinsight.lexiforge.service.ai.SceneConfiguration.encode(config);
+        domain.revision = 7;
+        var view = service.translate(1, request);
+        verify(ai).translateStream(org.mockito.ArgumentMatchers.argThat(p -> config.equals(p.sceneConfiguration())), any());
+        verify(ai, never()).generateScene(any());
+        domain.name = "已修改";
+        domain.configurationJson = null;
+        assertThat(view.sceneSnapshot().name()).isEqualTo("IT");
+        assertThat(view.sceneSnapshot().configuration()).isEqualTo(config);
+        assertThat(view.sceneRevision()).isEqualTo(7);
+    }
+
+    @Test
+    void previewUsesUnsavedDraftAndDoesNotOverwriteAnyScene() {
+        var draft = new com.justinsight.lexiforge.model.dto.SceneDto.PreviewRequest("preview", "草稿", "面向工程师",
+                null, "address", "EN", "ZH");
+        var view = service.preview(1, draft);
+        assertThat(view.domainId()).isNull();
+        assertThat(view.sceneSnapshot().name()).isEqualTo("草稿");
+        verify(domains, never()).save(any());
+        verify(entitlements).consume(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
+    }
+
+    @Test
+    void deletedSceneDoesNotBreakHistoricalSnapshot() {
+        var entity = saved(20);
+        entity.domainId = null;
+        entity.sceneSnapshotJson = com.justinsight.lexiforge.service.ai.SceneConfiguration.snapshot(domain);
+        when(translations.findByIdAndUserId(20L, 1L)).thenReturn(Optional.of(entity));
+        assertThat(service.one(1, 20).sceneSnapshot().name()).isEqualTo("IT");
+    }
+
     private WordDictionaryService.DictionaryHit dictHit() {
         return new WordDictionaryService.DictionaryHit(5L, "address", "EN", "地址", "en", List.of(), "test-model");
     }

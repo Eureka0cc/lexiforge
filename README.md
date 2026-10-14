@@ -10,6 +10,21 @@
 
 本地 AI 配置在 `dev,local` 下通过外部文件导入。Maven 资源排除 `application-local.yml`，部署须显式提供外部配置。验证命令：后端 `mvn -B clean test`，前端 `npm run test`、`npm run build`。
 
+### AI 场景配置与数据库验收
+
+场景支持一句话生成可编辑草稿、试译及保存复用。数据库 V6 增加配置、乐观锁版本、草稿与历史快照；旧场景保持描述模式，不自动改写。正常翻译不额外生成场景，删除场景不删除历史快照。Free/Pro 每日场景生成额度为 10/50 次；成功试译计入翻译额度，失败释放本次预占。生成和试译均使用有限 AI 执行资源。
+
+- `POST /api/scenes/generate/v1`：`requestId`、`description`，返回草稿及配置。
+- `POST /api/scenes/preview/v1`：草稿名称、描述、配置和原文/语言，返回带场景快照的翻译历史。
+- 场景 CRUD 增加 `configuration`、`expectedRevision`；返回 `revision`。过期编辑返回 `SCENE_VERSION_CONFLICT`。
+- 默认关闭全部模型；本地配置显式选择 chat 模型。部署启用文本 AI 时设置 `AI_ENABLED=true`、`AI_CHAT_MODEL=openai`，并提供外部连接配置。语音、图像等未使用模型保持关闭。
+
+真实 PostgreSQL 验收：设置 `LEXIFORGE_TEST_DB_URL` 指向独立的 `lexiforge_test*` 或 `lexiforge_acceptance*` 数据库，以及对应 `LEXIFORGE_TEST_DB_USERNAME/PASSWORD`，执行 `mvn -B -Pintegration verify`。不允许测试连接普通业务库。AI 使用可控 fixture，此测试不证明真实模型质量。
+
+浏览器界面验收：`cd frontend` 后执行 `npx playwright install chromium`、`npm run test:e2e`，覆盖桌面与移动视口。接口 fixture 与数据库集成证据分别记录。
+
+全部开发产物统一放到工作区的 `tmp/`：Maven 输出 `../tmp/backend`，前端构建输出 `../../tmp/frontend-dist`，浏览器报告/截图输出 `../../tmp/playwright`，类型信息与缓存使用对应子目录。目录均相对于各工具的项目目录解析，不提交 Git。真实 AI 小样本报告位于 `../tmp/acceptance`，不含密钥。
+
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
 ## 功能特性

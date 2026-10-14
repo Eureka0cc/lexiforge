@@ -7,6 +7,8 @@ import com.justinsight.lexiforge.repository.DomainRepository;
 import com.justinsight.lexiforge.model.entity.DomainTermEntity;
 import com.justinsight.lexiforge.repository.DomainTermRepository;
 import com.justinsight.lexiforge.model.dto.DomainDto;
+import com.justinsight.lexiforge.model.dto.SceneDto;
+import com.justinsight.lexiforge.service.ai.SceneConfiguration;
 import com.justinsight.lexiforge.common.id.SnowflakeIdGenerator;
 import com.justinsight.lexiforge.common.ApiException;
 import org.springframework.http.HttpStatus;
@@ -50,17 +52,24 @@ public class DomainServiceImpl implements DomainService {
         entity.ownerId = userId;
         entity.name = request.name();
         entity.description = request.description();
-        return view(domains.save(entity));
+        entity.configurationJson = SceneConfiguration.encode(request.configuration());
+        entity.configurationVersion = request.configuration() == null ? null : SceneDto.CONFIG_VERSION;
+        return view(domains.saveAndFlush(entity));
     }
 
     @Override
     @Transactional
     public DomainDto.DomainView update(long userId, long id, DomainDto.DomainRequest request) {
         DomainEntity entity = owned(userId, id);
+        if (request.expectedRevision() != null && request.expectedRevision() != entity.revision) {
+            throw new ApiException(HttpStatus.CONFLICT, "SCENE_VERSION_CONFLICT", "场景已被修改，请刷新后再保存");
+        }
         entity.name = request.name();
         entity.description = request.description();
+        entity.configurationJson = SceneConfiguration.encode(request.configuration());
+        entity.configurationVersion = request.configuration() == null ? null : SceneDto.CONFIG_VERSION;
         entity.updatedAt = Instant.now();
-        return view(domains.save(entity));
+        return view(domains.saveAndFlush(entity));
     }
 
     @Override
@@ -106,7 +115,8 @@ public class DomainServiceImpl implements DomainService {
         List<DomainDto.TermView> domainTerms = terms.findByDomainIdOrderBySourceTerm(entity.id)
                 .stream().map(this::term).toList();
         return new DomainDto.DomainView(entity.id.toString(), entity.code, entity.name,
-                entity.description, entity.builtIn, entity.medicalDisclaimer, domainTerms);
+                entity.description, entity.builtIn, entity.medicalDisclaimer, domainTerms,
+                SceneConfiguration.decode(entity.configurationJson), entity.revision, entity.configurationVersion);
     }
 
     private DomainDto.TermView term(DomainTermEntity entity) {

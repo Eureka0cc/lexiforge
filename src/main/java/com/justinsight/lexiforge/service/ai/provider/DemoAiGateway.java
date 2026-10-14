@@ -42,4 +42,9 @@ public class DemoAiGateway implements AiGateway {
         return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "AI_NOT_CONFIGURED",
                 "AI 服务尚未配置，请联系管理员完成接入后再试");
     }
+
+    @Override
+    public com.justinsight.lexiforge.model.dto.SceneDto.Generated generateScene(String description) {
+        throw unavailable();
+    }
 }

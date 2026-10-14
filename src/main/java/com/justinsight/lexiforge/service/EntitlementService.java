@@ -13,11 +13,11 @@ public interface EntitlementService {
 
     Usage usage(long userId);
 
-    enum UsageType { TRANSLATION, LOOKUP, GRADING, MNEMONIC }
+    enum UsageType { TRANSLATION, LOOKUP, GRADING, MNEMONIC, SCENE_GENERATION }
 
     record Plan(String code, String name, int translationLimit, int gradingLimit,
                 int mnemonicLimit, int customDomainLimit, int mnemonicVersions) {}
 
     record Usage(Plan plan, int translationsUsed, int lookupsUsed, int gradingsUsed,
-                 int mnemonicsUsed, String resetsAt) {}
+                 int mnemonicsUsed, int sceneGenerationsUsed, int sceneGenerationLimit, String resetsAt) {}
 }

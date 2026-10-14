@@ -22,3 +22,10 @@ application-local.yml
 
 # Logs
 *.log
+
+# Acceptance artifacts (may contain sample text)
+frontend/test-results/
+frontend/playwright-report/
+evaluation/results/
+tmp/
+*.tsbuildinfo

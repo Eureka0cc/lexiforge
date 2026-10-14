@@ -103,6 +103,7 @@ async function loadHistory() {
 }
 function validInput() {
   if (!source.value.trim() || !domainId.value) return false
+  if (domainId.value === 'ARCHIVED') { translationError.value = '请选择一个可用场景后再翻译'; return false }
   if (source.value.length > 5000) { translationError.value = '原文不能超过 5,000 个字符'; return false }
   if (sourceLanguage.value === targetLanguage.value) { translationError.value = '源语言与目标语言不能相同'; return false }
   return true
@@ -147,7 +148,7 @@ async function translate(forceRefresh = false) {
     if (!completed && ownVersion === version) throw new Error('连接已中断，翻译未完成')
   } catch (error) {
     if (ownVersion !== version || aborter.signal.aborted) return
-    if (forceRefresh && result.value) streamedText.value = result.value.translatedText
+    if (forceRefresh && result.value) { displayBuffer.clear(); streamedText.value = result.value.translatedText }
     translationError.value = error instanceof Error ? error.message : '翻译未完成，请稍后重试'
   } finally { if (ownVersion === version) { displayBuffer.flush(); translating.value = false } }
 }
@@ -182,7 +183,7 @@ function selectHistory(item: Translation) {
   source.value = item.sourceText
   sourceLanguage.value = item.sourceLanguage
   targetLanguage.value = item.targetLanguage
-  domainId.value = item.domainId
+  domainId.value = item.domainId ?? 'ARCHIVED'
   stale.value = false
   translationError.value = ''
   historyOpen.value = false
@@ -283,6 +284,7 @@ async function copyTranslation() {
       <div class="toolbar-group domain-control">
         <label for="domain-select">翻译场景</label>
         <a-select id="domain-select" v-model:value="domainId" :loading="domainsLoading" :disabled="domainsError">
+          <a-select-option v-if="domainId === 'ARCHIVED'" value="ARCHIVED" disabled>{{ result?.sceneSnapshot?.name || '历史场景' }}（历史快照）</a-select-option>
           <a-select-option v-for="domain in domains" :key="domain.id" :value="domain.id">{{ domain.name }}</a-select-option>
         </a-select>
         <a-button v-if="domainsError" type="link" @click="loadDomains"><ReloadOutlined />重试</a-button>

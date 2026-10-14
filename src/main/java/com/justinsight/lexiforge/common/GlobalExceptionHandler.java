@@ -44,6 +44,12 @@ public class GlobalExceptionHandler {
         return ResponseEntity.status(HttpStatus.FORBIDDEN).body(error("FORBIDDEN", "无权执行此操作", Map.of(), request));
     }
 
+    @ExceptionHandler(org.springframework.orm.ObjectOptimisticLockingFailureException.class)
+    ResponseEntity<ApiResponse<Void>> versionConflict(Exception ex, HttpServletRequest request) {
+        return ResponseEntity.status(HttpStatus.CONFLICT).body(error("SCENE_VERSION_CONFLICT",
+                "数据已被修改，请刷新后再保存", Map.of(), request));
+    }
+
     @ExceptionHandler(Exception.class)
     ResponseEntity<ApiResponse<Void>> unknown(Exception ex, HttpServletRequest request) {
         String requestId = requestId(request);

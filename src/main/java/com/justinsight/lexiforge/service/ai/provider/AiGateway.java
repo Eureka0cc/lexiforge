@@ -26,15 +26,24 @@ public interface AiGateway {
 
     MnemonicResult mnemonic(MnemonicPrompt prompt);
 
+    default com.justinsight.lexiforge.model.dto.SceneDto.Generated generateScene(String description) {
+        throw new UnsupportedOperationException("当前 AI 服务未实现场景生成");
+    }
+
     record GlossaryTerm(String sourceTerm, String targetTerm) {
     }
 
     record TranslationPrompt(String sourceText, String sourceLanguage, String targetLanguage, String domainName,
                              String domainDescription, List<GlossaryTerm> glossary,
-                             String context, boolean includeTerms) {
+                             String context, boolean includeTerms,
+                             com.justinsight.lexiforge.model.dto.SceneDto.Config sceneConfiguration) {
+        public TranslationPrompt(String sourceText, String sourceLanguage, String targetLanguage, String domainName,
+                                 String domainDescription, List<GlossaryTerm> glossary, String context, boolean includeTerms) {
+            this(sourceText, sourceLanguage, targetLanguage, domainName, domainDescription, glossary, context, includeTerms, null);
+        }
         public TranslationPrompt(String sourceText, String sourceLanguage, String targetLanguage,
                                  String domainName, String domainDescription, List<GlossaryTerm> glossary) {
-            this(sourceText, sourceLanguage, targetLanguage, domainName, domainDescription, glossary, "", false);
+            this(sourceText, sourceLanguage, targetLanguage, domainName, domainDescription, glossary, "", false, null);
         }
     }
 

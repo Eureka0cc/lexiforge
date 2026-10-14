@@ -19,5 +19,7 @@ public class TranslationEntity {
     @Column(name="model_version") public String modelVersion;
     @Column(name="prompt_version") public String promptVersion;
     @Column(name="request_fingerprint",length=64) public String requestFingerprint;
+    @Column(name="scene_revision") public Long sceneRevision;
+    @Column(name="scene_snapshot_json",columnDefinition="text") public String sceneSnapshotJson;
     @Column(name="created_at",nullable=false) public Instant createdAt=Instant.now();
 }

@@ -16,6 +16,8 @@ import com.justinsight.lexiforge.service.EntitlementService;
 import com.justinsight.lexiforge.service.EventService;
 import com.justinsight.lexiforge.service.ai.TranslationCacheService;
 import com.justinsight.lexiforge.service.ai.WordDictionaryService;
+import com.justinsight.lexiforge.service.ai.SceneConfiguration;
+import com.justinsight.lexiforge.model.dto.SceneDto;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import tools.jackson.databind.ObjectMapper;
@@ -68,6 +70,23 @@ public class TranslationServiceImpl implements TranslationService {
     }
 
     @Override
+    public TranslationDto.View preview(long userId, SceneDto.PreviewRequest preview) {
+        if (preview.sourceLanguage().equals(preview.targetLanguage())) {
+            throw new ApiException(HttpStatus.BAD_REQUEST, "SAME_LANGUAGE", "源语言与目标语言不能相同");
+        }
+        DomainEntity draft = new DomainEntity();
+        draft.name = preview.name();
+        draft.description = preview.description();
+        draft.ownerId = userId;
+        draft.configurationJson = SceneConfiguration.encode(preview.configuration());
+        draft.configurationVersion = preview.configuration() == null ? null : SceneDto.CONFIG_VERSION;
+        var request = new TranslationDto.Request(preview.sourceText(), preview.sourceLanguage(),
+                preview.targetLanguage(), null, null, false, true);
+        String fingerprint = cache.fingerprint(userId, request, draft, List.of());
+        return translateResolved(userId, request, draft, List.of(), fingerprint, ignored -> {});
+    }
+
+    @Override
     public TranslationDto.View translate(long userId, TranslationDto.Request request) {
         return translate(userId, request, ignored -> { });
     }
@@ -109,7 +128,8 @@ public class TranslationServiceImpl implements TranslationService {
         try {
             AiGateway.TranslationResult result = ai.translateStream(new AiGateway.TranslationPrompt(
                     request.sourceText(), request.sourceLanguage(), request.targetLanguage(),
-                    domain.name, domain.description, glossary, request.context(), false), deltaConsumer);
+                    domain.name, domain.description, glossary, request.context(), false,
+                    SceneConfiguration.decode(domain.configurationJson)), deltaConsumer);
             if (result == null || result.translatedText() == null || result.translatedText().isBlank()) {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_INVALID_RESPONSE", "AI 未返回有效译文，请重试");
             }
@@ -149,6 +169,8 @@ public class TranslationServiceImpl implements TranslationService {
         entity.promptVersion = TranslationCacheService.PROMPT_VERSION;
         entity.modelVersion = modelVersion;
         entity.requestFingerprint = fingerprint;
+        entity.sceneRevision = domain.revision;
+        entity.sceneSnapshotJson = SceneConfiguration.snapshot(domain);
         translations.save(entity);
         events.track(userId, eventName,
                 "{\"domain\":\"" + (domain.code == null ? "CUSTOM" : domain.code) + "\"}");
@@ -161,8 +183,7 @@ public class TranslationServiceImpl implements TranslationService {
         var result = translations.findByUserIdOrderByCreatedAtDesc(userId,
                 PageRequest.of(Math.max(0, page), Math.min(50, Math.max(1, size))));
         List<TranslationDto.View> items = result.getContent().stream()
-                .map(entity -> view(entity, domains.findById(entity.domainId)
-                        .map(domain -> domain.medicalDisclaimer).orElse(false)))
+                .map(entity -> view(entity, disclaimer(entity)))
                 .toList();
         return new TranslationDto.PageView(items, result.getNumber(), result.getSize(),
                 result.getTotalElements());
@@ -173,9 +194,7 @@ public class TranslationServiceImpl implements TranslationService {
     public TranslationDto.View one(long userId, long id) {
         TranslationEntity entity = translations.findByIdAndUserId(id, userId)
                 .orElseThrow(this::missing);
-        boolean disclaimer = domains.findById(entity.domainId)
-                .map(domain -> domain.medicalDisclaimer).orElse(false);
-        return view(entity, disclaimer);
+        return view(entity, disclaimer(entity));
     }
 
     @Override
@@ -214,7 +233,15 @@ public class TranslationServiceImpl implements TranslationService {
                 entity.domainId == null ? null : entity.domainId.toString(),
                 entity.sourceLanguage, entity.targetLanguage, entity.detectedLanguage,
                 entity.sourceText, entity.translatedText, disclaimer, entity.createdAt, termViews,
-                readAlternatives(entity.alternativesJson));
+                readAlternatives(entity.alternativesJson), entity.sceneRevision,
+                SceneConfiguration.readSnapshot(entity.sceneSnapshotJson));
+    }
+
+    private boolean disclaimer(TranslationEntity entity) {
+        var snapshot = SceneConfiguration.readSnapshot(entity.sceneSnapshotJson);
+        if (snapshot != null) return snapshot.medicalDisclaimer();
+        return entity.domainId != null && domains.findById(entity.domainId)
+                .map(domain -> domain.medicalDisclaimer).orElse(false);
     }
 
     private ApiException missing() {

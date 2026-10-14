@@ -3,7 +3,6 @@ package com.justinsight.lexiforge.service.ai.provider;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.regex.Pattern;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
@@ -19,9 +18,6 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 @EnabledIfEnvironmentVariable(named = "AI_LIVE_TEST", matches = "true")
 class SpringAiGatewayStructuredOutputLiveTest {
-    private static final Pattern BASE_URL = Pattern.compile("(?m)^\\s*base-url:\\s*(\\S+)");
-    private static final Pattern API_KEY = Pattern.compile("(?m)^\\s*api-key:\\s*(\\S+)");
-    private static final Pattern MODEL = Pattern.compile("(?m)^\\s*model:\\s*(\\S+)");
 
     @Test
     void translateWithProviderStructuredOutputSchema() throws IOException {
@@ -43,26 +39,23 @@ class SpringAiGatewayStructuredOutputLiveTest {
         assertThat(result.result()).isIn("CORRECT", "PARTIAL", "WRONG");
     }
 
-    private static SpringAiGateway gateway() throws IOException {
-        String yaml;
-        yaml = java.nio.file.Files.readString(java.nio.file.Path.of("src/main/resources/application-local.yml"), StandardCharsets.UTF_8);
-        var baseUrl = match(yaml, BASE_URL);
-        var apiKey = match(yaml, API_KEY);
-        var model = match(yaml, MODEL);
-
+    static SpringAiGateway gateway() throws IOException {
+        var environment = new org.springframework.core.env.StandardEnvironment();
+        var sources = new org.springframework.boot.env.YamlPropertySourceLoader().load("live-ai",
+                new org.springframework.core.io.FileSystemResource("src/main/resources/application-local.yml"));
+        sources.forEach(source -> environment.getPropertySources().addFirst(source));
+        var builder = OpenAiChatOptions.builder()
+                .baseUrl(environment.getRequiredProperty("spring.ai.openai.base-url"))
+                .apiKey(environment.getRequiredProperty("spring.ai.openai.api-key"))
+                .model(environment.getRequiredProperty("spring.ai.openai.chat.options.model"));
+        String thinking = environment.getProperty("spring.ai.openai.chat.options.extra-body.thinking.type");
+        if (thinking != null) builder.extraBody(java.util.Map.of("thinking", java.util.Map.of("type", thinking)));
+        String reasoning = environment.getProperty("spring.ai.openai.chat.options.reasoning-effort");
+        if (reasoning != null) builder.reasoningEffort(reasoning);
         OpenAiChatModel chatModel = OpenAiChatModel.builder()
-                .options(OpenAiChatOptions.builder()
-                        .baseUrl(baseUrl)
-                        .apiKey(apiKey)
-                        .model(model)
-                        .build())
+                .options(builder.build())
                 .build();
-        return new SpringAiGateway(ChatClient.builder(chatModel), true);
-    }
-
-    private static String match(String yaml, Pattern pattern) {
-        var matcher = pattern.matcher(yaml);
-        assertThat(matcher.find()).as("application-local.yml 缺少配置项 %s", pattern).isTrue();
-        return matcher.group(1);
+        return new SpringAiGateway(ChatClient.builder(chatModel),
+                environment.getProperty("app.ai.provider-structured-output", Boolean.class, false));
     }
 }

@@ -37,4 +37,14 @@ class SchemaContractTest {
             assertThat(sql).doesNotContain("DROP TABLE");
         }
     }
+
+    @Test void scenesKeepConfigurationVersionsAndHistoricalSnapshots() throws Exception {
+        try (var in = getClass().getResourceAsStream("/db/migration/V6__scene_configuration.sql")) {
+            assertThat(in).isNotNull();
+            String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8).toUpperCase();
+            assertThat(sql).contains("CONFIGURATION_JSON", "REVISION BIGINT", "SCENE_SNAPSHOT_JSON",
+                    "CREATE TABLE SCENE_DRAFT", "SCENE_GENERATION_COUNT");
+            assertThat(sql).doesNotContain("DROP TABLE", "SERIAL", "NEXTVAL(");
+        }
+    }
 }

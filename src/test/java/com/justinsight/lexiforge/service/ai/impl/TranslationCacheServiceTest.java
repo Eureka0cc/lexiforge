@@ -48,6 +48,17 @@ class TranslationCacheServiceTest {
     }
 
     @Test
+    void sceneConfigurationAndRevisionInvalidateCachedResult() {
+        var cache = cache("model", "1");
+        String original = cache.fingerprint(1, request("sample", null), domain, List.of());
+        domain.configurationJson = "{\"style\":\"简洁\"}";
+        String configured = cache.fingerprint(1, request("sample", null), domain, List.of());
+        assertThat(configured).isNotEqualTo(original);
+        domain.revision++;
+        assertThat(cache.fingerprint(1, request("sample", null), domain, List.of())).isNotEqualTo(configured);
+    }
+
+    @Test
     void cacheExpiresEvictsLeastRecentlyUsedAndRemovesDeletedIds() {
         Clock clock = mock(Clock.class);
         Instant now = Instant.parse("2026-09-08T00:00:00Z");

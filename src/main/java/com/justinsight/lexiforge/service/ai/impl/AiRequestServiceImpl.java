@@ -33,7 +33,7 @@ public class AiRequestServiceImpl implements AiRequestService {
     @Override
     @Transactional
     public BeginResult begin(long userId, String requestId, String operation, String input) {
-        String inputHash = hash(input);
+        String inputHash = hash(operation + '\u0000' + input);
         var existing = requests.findByUserIdAndRequestId(userId, requestId);
         if (existing.isPresent()) return existing(existing.get(), inputHash);
         AiRequestEntity entity = new AiRequestEntity();
@@ -44,7 +44,10 @@ public class AiRequestServiceImpl implements AiRequestService {
         entity.inputHash = inputHash;
         entity.status = "PENDING";
         entity.usageDate = LocalDate.now(USAGE_ZONE);
-        entity.promptVersion = operation.toLowerCase() + "-v2";
+        entity.promptVersion = operation.equals("SCENE_GENERATION")
+                ? com.justinsight.lexiforge.model.dto.SceneDto.GENERATION_VERSION
+                : operation.equals("TRANSLATION") || operation.equals("SCENE_PREVIEW")
+                ? com.justinsight.lexiforge.service.ai.TranslationCacheService.PROMPT_VERSION : operation.toLowerCase() + "-v2";
         try {
             requests.saveAndFlush(entity);
             return new BeginResult(entity.id, false, null, entity.createdAt);

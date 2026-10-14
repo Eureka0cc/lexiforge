@@ -36,7 +36,8 @@ public final class TranslationDto {
     public record View(String id, String domainId, String sourceLanguage, String targetLanguage,
                        String detectedLanguage, String sourceText, String translatedText,
                        boolean medicalDisclaimer, Instant createdAt, List<TermView> terms,
-                       List<AlternativeView> alternatives) {
+                       List<AlternativeView> alternatives, Long sceneRevision,
+                       com.justinsight.lexiforge.service.ai.SceneConfiguration.Snapshot sceneSnapshot) {
     }
 
     public record PageView(List<View> items, int page, int size, long total) {

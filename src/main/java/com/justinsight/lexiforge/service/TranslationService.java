@@ -5,6 +5,7 @@ import com.justinsight.lexiforge.model.dto.TranslationDto;
 import java.util.function.Consumer;
 
 public interface TranslationService {
+    TranslationDto.View preview(long userId, com.justinsight.lexiforge.model.dto.SceneDto.PreviewRequest request);
     TranslationDto.View translate(long userId, TranslationDto.Request request);
 
     TranslationDto.View translate(long userId, TranslationDto.Request request,
