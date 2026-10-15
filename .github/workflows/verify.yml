@@ -62,6 +62,7 @@ jobs:
           node evaluation/build-corpus.mjs --check
           node --check evaluation/run-http.mjs
           node --check frontend/tests/runtime/translation-feedback.mjs
+          node --check frontend/tests/runtime/learning-journey.mjs
           node --test evaluation/run-http.test.mjs
           node --test evaluation/review-server.test.mjs
       - name: Check PowerShell syntax
