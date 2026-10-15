@@ -42,11 +42,13 @@ try {
     $result.ai=Get-LocalAiMetadata $paths
     & node (Join-Path $paths.Repo 'frontend/tests/runtime/learning-journey.mjs') $base $scratch
     if($LASTEXITCODE -ne 0){throw '真实浏览器学习闭环失败，保留现场报告'}
-    $stats=Sql $database @'
+    # Keep native psql arguments ASCII: Windows client code pages can corrupt literal Chinese.
+    $styleHex=[Convert]::ToHexString([Text.Encoding]::UTF8.GetBytes('简洁的中文工程说明，保持原文事实。'))
+    $stats=Sql $database @"
 SELECT json_build_object(
  'users',(SELECT count(*) FROM app_user),
  'translations',(SELECT count(*) FROM translation),
- 'configuredScenes',(SELECT count(*) FROM translation_domain WHERE built_in=false AND configuration_json::jsonb->>'style'='简洁的中文工程说明，保持原文事实。'),
+ 'configuredScenes',(SELECT count(*) FROM translation_domain WHERE built_in=false AND configuration_json::jsonb->>'style'=convert_from(decode('$styleHex','hex'),'UTF8')),
  'sceneSnapshots',(SELECT count(*) FROM translation WHERE scene_snapshot_json IS NOT NULL),
  'lookupsWithDetails',(SELECT count(*) FROM translation_lookup WHERE details_loaded=true),
  'collected',(SELECT count(*) FROM vocabulary_item WHERE source_type='LOOKUP'),
@@ -58,7 +60,7 @@ SELECT json_build_object(
  'reservedAi',(SELECT count(*) FROM ai_usage_reservation WHERE status='RESERVED'),
  'aiOperations',(SELECT json_agg(x) FROM (SELECT operation,status,count(*) AS count FROM ai_request GROUP BY operation,status ORDER BY operation,status)x)
 )::text;
-'@
+"@
     $result.databaseStats=$stats|ConvertFrom-Json
     foreach($field in @('users','translations','configuredScenes','sceneSnapshots','lookupsWithDetails','collected','finishedSessions','attempts','answeredItems','advancedSchedules')) {
         if($result.databaseStats.$field -ne 2){throw "数据库闭环数量不一致：$field"}
