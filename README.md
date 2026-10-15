@@ -56,7 +56,21 @@ V10 的 `ai_usage_reservation` 持久化翻译、场景生成和查词预占。�
 - 真实中断验收：`./scripts/verify-ai-crash.ps1 -DatabaseUrl jdbc:postgresql://localhost:5432/lexiforge_acceptance_20261014`。使用本机 Node HTTP 故障注入服务，观察上游请求和预占后强制结束后端；重启后等待真实时钟过期，不修改期限。仅用于故障恢复，不调用真实模型，也不证明翻译质量。覆盖完整清理期限，运行约 4 分钟。报告/日志写入 `tmp/ai-crash/`。
 - 数据库备份恢复：`./scripts/verify-database-recovery.ps1`，按需传 `DatabasePort/DatabaseUser/DatabasePassword`。脚本创建两个全新的随机命名验收库，通过应用生成账户、场景、词库和 Sandbox 订单，补入标注为 fixture 的历史数据。停止写入后实际执行 `pg_dump`/`pg_restore`，比较所有表的行数/全列校验，启动恢复库验证业务并退款。最后仅清理本脚本创建的库与进程；备份、校验清单和报告保留在 `tmp/database-recovery/`。不连接现有业务库。
 
-这些检查不替代版本回退、完整连续负载、真实 AI 20 并发和质量评测，未通过的门槛继续在实施台账跟踪。
+这些故障恢复检查不替代完整连续负载、真实 AI 20 并发和质量评测，未通过的门槛继续在实施台账跟踪。
+
+### 版本回退演练与 CI
+
+当前已验证的回退目标为 M4 提交 `50f2ea5`。先构建当前 jar 和前端生产包，安装 Playwright Chromium，然后运行：
+
+```powershell
+./scripts/verify-version-rollback.ps1 -RollbackRef 50f2ea5
+```
+
+脚本将指定提交原始源码导出到 `tmp/version-rollback/`，构建该版本前后端，不修改当前工作区。使用新建恢复验收库，先核对全部表的行数/全列校验，再依次启动当前版、旧版、当前版。保留 V10 数据库迁移；回退前必须排空 AI 请求和预占。验证旧版新增订单、重新升级继续处理该订单，以及三套生产页面读取场景、词库、历史和 Pro。浏览器直接连接真实验收后端，不使用接口 mock。其他回退目标需独立验收。
+
+报告、构建、页面截图和备份均在 `tmp/version-rollback/`、`tmp/database-recovery/`。这是隔离演练入口，不会回退现有业务库；结束后清理本脚本创建的进程和数据库。
+
+GitHub Actions 的 `Verify` 工作流在 main 推送、PR 和手动触发时运行，固定官方 Action 提交版本。覆盖 Java 21、PostgreSQL 16 单元/集成、PowerShell 语法、Node 22 前端单元/构建及桌面/移动浏览器测试。真实模型测试默认关闭；测试报告归档 7 天。Windows 进程管理、真实重启和版本回退由上面的本机验收脚本单独验证，不能由 Linux CI 语法检查代替。
 
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
@@ -96,7 +110,7 @@ V10 的 `ai_usage_reservation` 持久化翻译、场景生成和查词预占。�
 
 ## 快速开始
 
-### 本地启动入口（PowerShell 7）
+### 本地启动入口（Windows / PowerShell 7）
 
 先准备 Java 21、Maven、Node/npm 和可连接的 PostgreSQL 数据库；默认连接本机 `lexiforge`，不会创建或替换已有业务数据库。可通过 `DB_URL/DB_USERNAME/DB_PASSWORD` 环境变量指定连接。
 
