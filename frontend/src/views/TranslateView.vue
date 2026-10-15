@@ -131,6 +131,7 @@ async function loadHistory() {
   finally { historyLoading.value = false }
 }
 function validInput() {
+  if (composing.value) return false
   if (!source.value.trim() || !domainId.value) return false
   if (domainId.value === 'ARCHIVED') { translationError.value = '请选择一个可用场景后再翻译'; return false }
   if (source.value.length > 5000) { translationError.value = '原文不能超过 5,000 个字符'; return false }
@@ -203,6 +204,11 @@ function stop() {
 function invalidate() { clearTimer(); displayBuffer.clear(); closeLookup(); version += 1; controller?.abort(); controller = null }
 function compositionStart() { composing.value = true; clearTimer(); closeLookup() }
 function compositionEnd() { composing.value = false; schedule() }
+function submitShortcut(event: KeyboardEvent) {
+  if (event.isComposing || composing.value || event.repeat || event.defaultPrevented) return
+  event.preventDefault()
+  void translate(false)
+}
 function swapLanguages() {
   invalidate()
   const old = sourceLanguage.value
@@ -361,7 +367,7 @@ async function copyTranslation() {
       <DocumentPane :class="{ 'mobile-pane-active': mobileTab === 'source' }" title="原文">
         <textarea ref="sourceEditor" v-model="source" class="source-editor mono" maxlength="5000" aria-label="待翻译原文" placeholder="输入单词、句子或段落……"
           @compositionstart="compositionStart" @compositionend="compositionEnd" @mouseup="sourceSelection" @keyup="sourceSelection"
-          @keydown.ctrl.enter.prevent="translate(false)" @keydown.meta.enter.prevent="translate(false)" />
+          @keydown.ctrl.enter="submitShortcut" @keydown.meta.enter="submitShortcut" />
         <template #footer><span>{{ chars.toLocaleString() }} / 5,000 字符</span></template>
       </DocumentPane>
       <DocumentPane class="result-document" :class="{ 'mobile-pane-active': mobileTab === 'result' }" title="译文">

@@ -59,3 +59,36 @@ test('流式请求仅在生成开始前的 401 续期重发一次，保持原 re
   expect(attempts.map(value => value.authorization)).toEqual(['Bearer expired-token', 'Bearer renewed-token'])
   expect(refreshes).toBe(1)
 })
+
+for (const failure of ['service', 'network'] as const) {
+  test(`续期临时${failure === 'service' ? '服务错误' : '断网'}保留编辑内容，手动重试后恢复`, async ({ page }) => {
+    await session(page)
+    let attempts = 0, refreshes = 0
+    await page.route('**/api/domains/v1', route => ok(route, domains))
+    await page.route('**/api/translations/v1*', route => ok(route, { items: [] }))
+    await page.route('**/api/auth/refresh/v1', async route => {
+      refreshes++
+      if (refreshes === 1) {
+        if (failure === 'network') await route.abort('failed')
+        else await route.fulfill({ status: 503, json: { message: '会话服务暂时不可用' } })
+      } else await ok(route, { accessToken: 'renewed-token', user })
+    })
+    await page.route('**/api/translations/stream/v1', async route => {
+      attempts++
+      if (route.request().headers().authorization === 'Bearer expired-token') await route.fulfill({ status: 401, json: {} })
+      else await complete(route)
+    })
+    await page.goto('/translate')
+    const editor = page.getByRole('textbox', { name: '待翻译原文' })
+    await editor.fill('Keep this unsent work')
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect(page.locator('.workspace-alert')).toContainText(failure === 'service' ? '会话服务暂时不可用' : '会话续期暂时失败')
+    await expect(page).toHaveURL(/\/translate$/)
+    await expect(editor).toHaveValue('Keep this unsent work')
+    expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBe('expired-token')
+    expect(refreshes).toBe(1); expect(attempts).toBe(1)
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect(page.locator('.translated-document')).toContainText('续期后的结果')
+    expect(refreshes).toBe(2); expect(attempts).toBe(3)
+  })
+}

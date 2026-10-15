@@ -22,9 +22,14 @@ export function refreshSession() {
       saveStoredSession(data.accessToken, data.user)
       window.dispatchEvent(new Event('lexiforge:session-updated'))
     }).catch(error => {
-      clearStoredSession()
-      location.href = '/login'
-      throw error
+      if (error.response?.status === 401) {
+        clearStoredSession()
+        location.href = '/login'
+        throw error
+      }
+      // A timeout, offline connection or server error does not prove revocation.
+      // Keep the mounted editor; the next explicit action may attempt renewal again.
+      throw new Error(error.response?.data?.message || '会话续期暂时失败，请稍后重试')
     }).finally(() => { refreshPromise = null })
   }
   return refreshPromise

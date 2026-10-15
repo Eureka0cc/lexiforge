@@ -33,6 +33,12 @@ test('输入法组词期间不发送，结束后防抖 900ms，手动提交取�
     input.value = '输入法测试'
     input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertCompositionText', isComposing: true }))
   })
+  const prevented = await editor.evaluate(element => {
+    const event = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', ctrlKey: true, isComposing: true })
+    element.dispatchEvent(event)
+    return event.defaultPrevented
+  })
+  expect(prevented).toBe(false)
   await page.clock.fastForward(2000)
   expect(requests).toHaveLength(0)
   await editor.dispatchEvent('compositionend')
@@ -45,7 +51,7 @@ test('输入法组词期间不发送，结束后防抖 900ms，手动提交取�
   await expect(page.locator('.translated-document')).toContainText('输入法译文')
   if (!await editor.isVisible()) await page.getByRole('button', { name: '原文', exact: true }).click()
   await editor.fill('Manual request')
-  await page.getByRole('button', { name: /立即翻译/ }).click()
+  await editor.press('Control+Enter')
   await expect.poll(() => requests.length).toBe(2)
   await page.clock.fastForward(1500)
   expect(requests).toHaveLength(2)
