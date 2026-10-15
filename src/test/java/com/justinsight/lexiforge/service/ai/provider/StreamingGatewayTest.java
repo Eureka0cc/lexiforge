@@ -23,6 +23,34 @@ class StreamingGatewayTest {
             "We need to address this issue.", "EN", "ZH", "IT", "简洁严谨", List.of());
 
     @Test
+    void silentProviderTimesOutAsTimeoutWithoutRetryOrFormatError() throws Exception {
+        var release = new java.util.concurrent.CountDownLatch(1);
+        var requests = new java.util.concurrent.atomic.AtomicInteger();
+        var server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chat/completions", exchange -> {
+            requests.incrementAndGet();
+            exchange.getRequestBody().readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().flush();
+            try { release.await(10, java.util.concurrent.TimeUnit.SECONDS); }
+            catch (InterruptedException exception) { Thread.currentThread().interrupt(); }
+            finally { exchange.close(); }
+        });
+        server.start();
+        try {
+            var gateway = gateway(server);
+            org.springframework.test.util.ReflectionTestUtils.setField(gateway, "timeoutSeconds", 1L);
+            assertThatThrownBy(() -> gateway.translateStream(prompt, ignored -> {}))
+                    .isInstanceOfSatisfying(ApiException.class, error -> {
+                        assertThat(error.code()).isEqualTo("AI_TIMEOUT");
+                        assertThat(error.status()).isEqualTo(org.springframework.http.HttpStatus.GATEWAY_TIMEOUT);
+                    });
+            assertThat(requests.get()).isEqualTo(1);
+        } finally { release.countDown(); server.stop(0); }
+    }
+
+    @Test
     void forwardsOnlyDecodedTranslationAndValidatesFinalObject() throws Exception {
         var server = server(List.of("{\"translatedText\":\"需要", "解决这个问题。", "\",\"detectedLanguage\":\"EN\",\"alternatives\":[]}"), "stop");
         try {

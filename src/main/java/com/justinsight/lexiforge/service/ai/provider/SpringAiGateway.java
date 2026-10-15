@@ -78,6 +78,7 @@ public class SpringAiGateway implements AiGateway {
             throw exception;
         } catch (Exception exception) {
             if (Thread.currentThread().isInterrupted()) throw new CancellationException("翻译已取消");
+            if (isTimeout(exception)) throw timeout();
             // 异常对象可能包含供应商返回的用户文本，日志只记录类型。
             log.warn("AI stream failed: type={}", exception.getClass().getSimpleName());
             throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_INVALID_RESPONSE", "AI 返回格式不完整，请重试");
@@ -237,9 +238,24 @@ public class SpringAiGateway implements AiGateway {
         } catch (ApiException exception) {
             throw exception;
         } catch (RuntimeException exception) {
+            if (isTimeout(exception)) throw timeout();
             log.warn("AI structured operation failed: type={}", exception.getClass().getSimpleName());
             throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_SERVICE_ERROR", "AI 处理未完成，请稍后重试");
         }
+    }
+
+    private static boolean isTimeout(Throwable exception) {
+        Throwable cause = exception;
+        for (int depth = 0; cause != null && depth < 16; depth++, cause = cause.getCause()) {
+            if (cause instanceof java.util.concurrent.TimeoutException
+                    || cause instanceof java.net.SocketTimeoutException
+                    || cause instanceof java.net.http.HttpTimeoutException) return true;
+        }
+        return false;
+    }
+
+    private static ApiException timeout() {
+        return new ApiException(HttpStatus.GATEWAY_TIMEOUT, "AI_TIMEOUT", "AI 响应超时，请稍后重试");
     }
 
 }
