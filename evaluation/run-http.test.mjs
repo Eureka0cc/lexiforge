@@ -17,6 +17,7 @@ async function fixture(callback, expectedConcurrency = 1, failFirstStream = fals
     calls.push({ path: request.url, method: request.method, body });
     const ok = data => { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ success: true, data })); };
     if (request.url === '/api/auth/register/v1') return ok({ accessToken: 'fixture-token' });
+    if (request.url === '/api/auth/login/v1') return ok({ accessToken: 'fixture-token' });
     if (request.url === '/api/billing/orders/v1') return ok({ id: '1' });
     if (request.url.includes('/sandbox-pay/')) return ok({ status: 'PAID' });
     if (request.url === '/api/scenes/generate/v1') return ok({ name: 'FIXTURE', configuration: { domain: 'fixture', style: body.description } });
@@ -40,7 +41,7 @@ async function fixture(callback, expectedConcurrency = 1, failFirstStream = fals
       for (let index = 0; index < wire.length; index += 7) response.write(wire.subarray(index, index + 7));
       if (expectedConcurrency > 1) {
         waiting.push(() => { active--; response.end(); });
-        if (waiting.length === expectedConcurrency) for (const finish of waiting) finish();
+        if (waiting.length === expectedConcurrency) for (const finish of waiting.splice(0)) finish();
       } else setTimeout(() => { active--; response.end(); }, 10);
       return;
     }
@@ -50,9 +51,9 @@ async function fixture(callback, expectedConcurrency = 1, failFirstStream = fals
   try { await callback({ base: `http://127.0.0.1:${server.address().port}`, calls, get peak() { return peak; } }); }
   finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
 }
-async function run(base, mode, expectedCode = 0) {
+async function run(base, mode, expectedCode = 0, extra = []) {
   const output = resolve('../tmp/evaluation-protocol-tests', randomUUID()); mkdirSync(output, { recursive: true });
-  const child = spawn(process.execPath, ['evaluation/run-http.mjs', `--base=${base}`, `--mode=${mode}`, `--output=${output}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(process.execPath, ['evaluation/run-http.mjs', `--base=${base}`, `--mode=${mode}`, `--output=${output}`, ...extra], { stdio: ['ignore', 'pipe', 'pipe'] });
   let log = ''; child.stdout.on('data', data => log += data); child.stderr.on('data', data => log += data);
   const code = await new Promise((resolve, reject) => { child.on('error', reject); child.on('exit', resolve); });
   assert.equal(code, expectedCode, log);
@@ -101,4 +102,33 @@ test('partial deltas disagreeing with the completed result cannot become success
     const { summary } = await run(base, 'smoke', 1);
     assert.equal(summary.total, 3); assert.equal(summary.successful, 0);
   }, 1, false, true);
+});
+test('continuity rounds reuse the same 20 Pro fixtures with fresh logins and force fresh generations', async () => {
+  await fixture(async state => {
+    const directory = resolve('../tmp/evaluation-protocol-tests', randomUUID()); mkdirSync(directory, { recursive: true });
+    const users = resolve(directory, 'fixture-users.json');
+    for (let round = 0; round < 2; round++) {
+      const { summary } = await run(state.base, 'load', 0, [`--users-file=${users}`]);
+      assert.equal(summary.successful, 20);
+    }
+    assert.equal(state.calls.filter(call => call.path === '/api/auth/register/v1').length, 20);
+    assert.equal(state.calls.filter(call => call.path === '/api/auth/login/v1').length, 20);
+    assert.equal(state.calls.filter(call => call.path === '/api/billing/orders/v1').length, 20);
+    assert.equal(state.calls.filter(call => call.path === '/api/translations/stream/v1').length, 40);
+    assert.equal(JSON.parse(readFileSync(users)).users.length, 20);
+  }, 20);
+});
+test('performance replay uses all 200 sources and frozen scene inputs with no new scene generation', async () => {
+  await fixture(async ({ base, calls }) => {
+    const source = await run(base, 'quality');
+    const generated = calls.filter(call => call.path === '/api/scenes/generate/v1').length;
+    const replay = await run(base, 'performance', 0, [`--scene-results=${resolve(source.output, 'results.jsonl')}`]);
+    assert.equal(replay.summary.successful, 200);
+    assert.equal(replay.summary.sceneSourceRun, source.summary.runId);
+    assert.equal(replay.summary.humanReview, 'TIMING_ONLY_NO_SCORES_REUSED');
+    assert.equal(calls.filter(call => call.path === '/api/scenes/generate/v1').length, generated);
+    const original = readFileSync(resolve(source.output, 'results.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    const rows = readFileSync(resolve(replay.output, 'results.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+    for (const row of rows.filter(row => row.savedScene)) assert.deepEqual(row.savedScene.configuration, original.find(item => item.id === row.id).savedScene.configuration);
+  });
 });

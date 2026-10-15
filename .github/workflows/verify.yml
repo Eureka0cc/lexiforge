@@ -63,6 +63,7 @@ jobs:
           node --check evaluation/run-http.mjs
           node --check frontend/tests/runtime/translation-feedback.mjs
           node --test evaluation/run-http.test.mjs
+          node --test evaluation/review-server.test.mjs
       - name: Check PowerShell syntax
         shell: pwsh
         run: |
@@ -72,6 +73,7 @@ jobs:
             [Management.Automation.Language.Parser]::ParseFile($file.FullName, [ref]$tokens, [ref]$errors) | Out-Null
             if ($errors.Count) { throw ($errors | Out-String) }
           }
+          ./scripts/tests/verify-ai-metadata.ps1
       - name: Frontend install and verification
         working-directory: frontend
         run: |
@@ -80,6 +82,7 @@ jobs:
           npm run build
           npx playwright install --with-deps chromium
           npm run test:e2e -- --workers=2
+          node --test tests/runtime/review-ui.test.mjs
       - name: Resolve report directory
         if: always()
         run: echo "VERIFICATION_OUTPUT_ROOT=$(realpath -m ../tmp)" >> "$GITHUB_ENV"

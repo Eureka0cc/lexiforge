@@ -1,4 +1,25 @@
 # Shared local process ownership checks. Runtime data belongs only in workspace tmp/.
+function Get-LocalAiMetadata($paths) {
+    $file=Join-Path $paths.Repo 'src/main/resources/application-local.yml'
+    function Leaf([string]$name) {
+        $line=Select-String -LiteralPath $file -Pattern ('^[ \t]+'+[regex]::Escape($name)+'[ \t]*:[ \t]*\S+')|Select-Object -First 1
+        if(!$line){return $null}
+        $value=($line.Line -split ':',2)[1].Trim().Trim('"',"'")
+        if($value -match '^\$\{([^:}]+)(?::(.*))?\}$') {
+            $selected=[Environment]::GetEnvironmentVariable($Matches[1]); if($selected){return $selected}; return $Matches[2]
+        }
+        return $value
+    }
+    $base=Leaf 'base-url'; $uri=$null; $origin='unresolved (see private configuration fingerprint)'
+    if([Uri]::TryCreate($base,[UriKind]::Absolute,[ref]$uri) -and $uri.Scheme -in @('http','https')) {
+        $hostName=$uri.Host; if($hostName.Contains(':')){$hostName="[$hostName]"}
+        $origin=$uri.Scheme+'://'+$hostName
+        if(!$uri.IsDefaultPort){$origin+=':'+$uri.Port}
+    }
+    $thinking=Leaf 'type'; if($thinking -notin @('enabled','disabled')){$thinking='provider-default or custom'}
+    return @{ model=(Leaf 'model'); providerOrigin=$origin; thinkingMode=$thinking;
+        localConfigSha256=(Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash }
+}
 function Get-LocalRuntimePaths([string]$InstanceName) {
     if($InstanceName -notmatch '^[a-z0-9-]{1,40}$') { throw '实例名仅允许小写字母、数字和短横线' }
     $repo=[IO.Path]::GetFullPath((Split-Path -Parent $PSScriptRoot))

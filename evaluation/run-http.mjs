@@ -19,7 +19,28 @@ const corpus = corpusBytes.toString('utf8').trim().split('\n').map(JSON.parse);
 const manifest = JSON.parse(readFileSync(resolve(here, 'acceptance-v1.manifest.json'), 'utf8'));
 if (createHash('sha256').update(corpusBytes).digest('hex') !== manifest.sha256) throw new Error('Corpus hash differs');
 const mode = args.mode ?? 'quality';
-if (!['quality', 'load', 'smoke'].includes(mode)) throw new Error('Unknown mode');
+if (!['quality', 'load', 'smoke', 'performance'].includes(mode)) throw new Error('Unknown mode');
+let sceneSnapshots = null, sceneSourceRun = null, sceneSnapshotSha256 = null;
+if (mode === 'performance') {
+  if (!args['scene-results']) throw new Error('Performance replay requires a complete quality run scene-results file');
+  const source = resolve(args['scene-results']), within = relative(tmp, source);
+  if (within.startsWith('..') || isAbsolute(within)) throw new Error('Scene snapshots must be inside tmp');
+  const summary = JSON.parse(readFileSync(resolve(dirname(source), 'summary.json'), 'utf8'));
+  const bytes = readFileSync(source), results = bytes.toString('utf8').trim().split('\n').map(JSON.parse);
+  if (summary.mode !== 'quality' || summary.corpusSha256 !== manifest.sha256 || results.length !== 200 || new Set(results.map(row => row.id)).size !== 200) throw new Error('Scene replay source is not a complete matching quality run');
+  sceneSnapshots = new Map(results.map(row => [row.id, row.savedScene]));
+  if (corpus.some(row => row.scene && !sceneSnapshots.get(row.id)?.configuration)) throw new Error('A frozen scene configuration is missing');
+  sceneSourceRun = summary.runId; sceneSnapshotSha256 = createHash('sha256').update(bytes).digest('hex');
+} else if (args['scene-results']) throw new Error('Scene snapshots may only be reused for timing-only performance mode');
+const usersFile = args['users-file'] ? resolve(args['users-file']) : null;
+if (usersFile) {
+  const within = relative(tmp, usersFile);
+  if (mode !== 'load' || within.startsWith('..') || isAbsolute(within)) throw new Error('Persistent fixture users are only allowed for load mode inside tmp');
+}
+const savedUsers = usersFile && existsSync(usersFile) ? JSON.parse(readFileSync(usersFile, 'utf8')) : null;
+if (savedUsers && (savedUsers.kind !== 'lexiforge-load-fixture-users-v1' || savedUsers.origin !== base.origin || savedUsers.users?.length !== 20
+  || savedUsers.users.some(row => !/^eval-[a-f0-9-]+-\d+@example\.test$/.test(row.email) || typeof row.password !== 'string' || row.password.length < 8))) throw new Error('Fixture users file does not belong to this local load target');
+const credentials = savedUsers?.users ?? [];
 const developmentCases = [
   { sourceText: 'We need to address this issue.', sourceLanguage: 'EN', targetLanguage: 'ZH' },
   { sourceText: 'Do not write to CTRL_REG unless bit 3 is set. The reset value is 0x10.', sourceLanguage: 'EN', targetLanguage: 'ZH' },
@@ -41,12 +62,14 @@ async function api(path, body, token, method = 'POST') {
 }
 async function user(index) {
   if (users[index]) return users[index];
-  const account = await api('/api/auth/register/v1', {
-    email: `eval-${runId}-${index}@example.test`, password: randomUUID() + 'Aa1!', displayName: '固定验收测试',
-  });
+  const credential = credentials[index] ?? { email: `eval-${runId}-${index}@example.test`, password: randomUUID() + 'Aa1!' };
+  const account = await api(savedUsers ? '/api/auth/login/v1' : '/api/auth/register/v1', savedUsers ? credential : { ...credential, displayName: '固定验收测试' });
   const token = account.accessToken;
-  const order = await api('/api/billing/orders/v1', { requestId: randomUUID(), cycle: 'MONTH', channel: 'ALIPAY_SIMULATOR' }, token);
-  await api(`/api/billing/orders/${order.id}/sandbox-pay/v1`, {}, token);
+  if (!savedUsers) {
+    const order = await api('/api/billing/orders/v1', { requestId: randomUUID(), cycle: 'MONTH', channel: 'ALIPAY_SIMULATOR' }, token);
+    await api(`/api/billing/orders/${order.id}/sandbox-pay/v1`, {}, token);
+  }
+  credentials[index] = credential;
   users[index] = { token, sceneId: null, revision: null };
   return users[index];
 }
@@ -54,11 +77,13 @@ async function scene(row, account) {
   if (!row.scene) return { domainId: null };
   const started = performance.now();
   // Whitelist input: only authored description, never reference/review/mustPreserve.
-  const draft = await api('/api/scenes/generate/v1', { requestId: randomUUID(), description: row.sceneDescription }, account.token);
-  const body = { name: draft.name, description: row.sceneDescription, configuration: draft.configuration, expectedRevision: account.revision };
+  const snapshot = sceneSnapshots?.get(row.id);
+  const draft = snapshot ? { name: snapshot.name, configuration: snapshot.configuration } : await api('/api/scenes/generate/v1', { requestId: randomUUID(), description: row.sceneDescription }, account.token);
+  const body = { name: draft.name, description: snapshot?.description ?? row.sceneDescription, configuration: draft.configuration, expectedRevision: account.revision };
   const saved = await api(account.sceneId ? `/api/domains/${account.sceneId}/v1` : '/api/domains/v1', body, account.token, account.sceneId ? 'PATCH' : 'POST');
   account.sceneId = saved.id; account.revision = saved.revision;
-  return { domainId: saved.id, generatedScene: draft, savedScene: saved, sceneMs: performance.now() - started };
+  return { domainId: saved.id, ...(snapshot ? { sceneSourceRun } : { generatedScene: draft }), savedScene: saved,
+    sceneMode: snapshot ? 'frozen-snapshot' : 'new-generation', sceneMs: performance.now() - started };
 }
 async function translate(row, account, domainId, forceRefresh = true) {
   const started = performance.now();
@@ -103,7 +128,9 @@ async function translate(row, account, domainId, forceRefresh = true) {
 const percentile = (values, p) => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1] : null;
 const metadata = { runId, mode, startedAt: new Date().toISOString(), corpusSha256: manifest.sha256,
   requestOrigin: base.origin, timingVersion: 'http-timing-v2', timingScope: 'HTTP request -> first visible text (delta or completed) / completed event; stream closure, auth and scene generation separate',
-  modelSelection: 'unchanged local application config', humanReview: 'PENDING',
+  modelSelection: 'unchanged local application config', sceneSourceRun, sceneSnapshotSha256,
+  fixtureAccounts: usersFile ? (savedUsers ? 'existing 20 fixtures, fresh login' : 'create 20 fixtures once') : 'new fixtures for this run',
+  humanReview: mode === 'performance' ? 'TIMING_ONLY_NO_SCORES_REUSED' : 'PENDING',
   warning: 'No automatic semantic or human quality pass is asserted. Failures remain in the denominator.' };
 writeFileSync(resolve(out, 'metadata.json'), JSON.stringify(metadata, null, 2));
 async function run(row, index, useScene = true) {
@@ -126,6 +153,7 @@ function record(row) { rows.push(row); appendFileSync(resolve(out, 'results.json
 if (mode === 'load') {
   // Pre-admit 20 independent fixture accounts before a shared barrier; all sources differ.
   await Promise.all(Array.from({ length: 20 }, (_, index) => user(index)));
+  if (usersFile && !savedUsers) writeFileSync(usersFile, JSON.stringify({ kind: 'lexiforge-load-fixture-users-v1', origin: base.origin, users: credentials }, null, 2), { flag: 'wx', mode: 0o600 });
   const start = performance.now();
   await Promise.all(corpus.slice(0, 20).map((row, index) => run(row, index, false).then(record)));
   metadata.batchMs = performance.now() - start; metadata.concurrency = 20;
@@ -150,6 +178,7 @@ const summary = { ...metadata, finishedAt: new Date().toISOString(), total: rows
 writeFileSync(resolve(out, 'summary.json'), JSON.stringify(summary, null, 2));
 const quote = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
 const header = ['id','category','pairId','variant','source','sceneDescription','reference','reviewCriteria','actual','status','accuracy_1_5','naturalness_1_5','sceneFollow_yes_no','criticalFacts_yes_no','injectionSafe_yes_no','reviewer','notes'];
+if (mode !== 'performance') {
 writeFileSync(resolve(out, 'human-review.csv'), '\ufeff' + [header, ...rows.map(row => {
   const fixture = selectedCases.find(value => value.id === row.id);
   return [row.id,row.category,fixture.pairId,fixture.variant,fixture.sourceText,fixture.sceneDescription,fixture.reference,fixture.review,row.translation?.translatedText,row.success ? 'OK' : row.error,'','','','','','',''];
@@ -157,5 +186,6 @@ writeFileSync(resolve(out, 'human-review.csv'), '\ufeff' + [header, ...rows.map(
 writeFileSync(resolve(out, 'human-review.json'), JSON.stringify({ corpusSha256: manifest.sha256, runId,
   rows: rows.map(row => ({ id: row.id, accuracy: null, naturalness: null, sceneFollow: null,
     criticalFactsPreserved: null, injectionSafe: null, reviewer: '', notes: '' })) }, null, 2));
-console.log(`Report: ${out}; ${summary.successful}/${summary.total}; first visible P95=${summary.firstVisibleP95Ms}ms; HUMAN REVIEW PENDING`);
+}
+console.log(`Report: ${out}; ${summary.successful}/${summary.total}; first visible P95=${summary.firstVisibleP95Ms}ms; ${mode === 'performance' ? 'TIMING ONLY, NO QUALITY PASS ASSERTED' : 'HUMAN REVIEW PENDING'}`);
 if (summary.errors) process.exitCode = 1;
