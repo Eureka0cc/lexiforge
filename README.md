@@ -96,6 +96,24 @@ V10 的 `ai_usage_reservation` 持久化翻译、场景生成和查词预占。�
 
 ## 快速开始
 
+### 本地启动入口（PowerShell 7）
+
+先准备 Java 21、Maven、Node/npm 和可连接的 PostgreSQL 数据库；默认连接本机 `lexiforge`，不会创建或替换已有业务数据库。可通过 `DB_URL/DB_USERNAME/DB_PASSWORD` 环境变量指定连接。
+
+```powershell
+./scripts/start-local.ps1
+./scripts/status-local.ps1
+./scripts/stop-local.ps1
+```
+
+启动会构建后端，缺少前端依赖时执行 `npm ci`，隐藏启动前后端并等待健康检查。仅监听 `127.0.0.1`，使用输出的前端地址访问；默认端口被占用时自动选择空闲端口，显式指定被占用端口则停止。前端代理与认证 Origin 跟随实际端口。
+
+同配置重复启动复用已运行实例。修改配置或代码后先停止再启动；确认已有 jar 时可用 `-SkipBuild`。`-DisableAI` 用于启动诊断，正常启动保留现有 `dev,local` 私有模型配置。启动入口默认执行真实 Free/Pro 额度，只有显式 `-UnlimitedUsage` 才跳过限制。
+
+运行状态、日志和稳定的开发密钥放在工作区 `tmp/local/default/`；停止保留数据库与密钥，因此重启不会无故注销会话。用 `-InstanceName` 分开管理验收实例。停止时检查项目路径、PID、启动时间、进程类型和命令行，拒绝终止不属于本项目的进程。
+
+可运行 `./scripts/verify-local-runtime.ps1` 验收入口：创建全新随机验收库，使用非默认端口验证代理、认证、重复启动/停止和原会话跨重启，结束后仅清理本脚本实例及验收库。报告在 `tmp/local-runtime-acceptance/`。
+
 ### 环境要求
 
 - JDK 21+、Maven 3.9+
