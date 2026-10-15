@@ -28,6 +28,7 @@ import static org.assertj.core.api.Assertions.*;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT, properties = {
         "spring.ai.model.chat=openai", "app.ai.enabled=true", "app.ai.provider-structured-output=false",
         "spring.ai.openai.api-key=transport-fixture-key", "spring.ai.openai.chat.options.model=transport-fixture",
+        "spring.ai.openai.chat.options.extra-body.thinking.type=disabled",
         "app.jwt.secret=test-only-secret-never-use-in-production-0123456789"})
 @EnabledIfEnvironmentVariable(named="LEXIFORGE_TEST_DB_URL", matches=".+")
 class TranslationDisconnectIT {
@@ -36,6 +37,7 @@ class TranslationDisconnectIT {
     private static final AtomicInteger chunks = new AtomicInteger();
     private static final AtomicBoolean upstreamAborted = new AtomicBoolean();
     private static final AtomicBoolean finishNormally = new AtomicBoolean();
+    private static final AtomicReference<String> thinkingMode = new AtomicReference<>();
     private static final CountDownLatch stopped = new CountDownLatch(1);
     private static final ObjectMapper mapper = new ObjectMapper();
     @Autowired AuthService auth;
@@ -53,7 +55,9 @@ class TranslationDisconnectIT {
             try {
                 provider = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
                 provider.createContext("/chat/completions", exchange -> {
-                    exchange.getRequestBody().readAllBytes(); providerCalls.incrementAndGet();
+                    var request = mapper.readTree(exchange.getRequestBody().readAllBytes());
+                    thinkingMode.set(request.path("thinking").path("type").asText());
+                    providerCalls.incrementAndGet();
                     exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
                     exchange.sendResponseHeaders(200, 0);
                     try {
@@ -128,6 +132,7 @@ class TranslationDisconnectIT {
             assertThat(response.body()).contains("completed", "Retry complete");
         }
         assertThat(providerCalls.get()).isEqualTo(2);
+        assertThat(thinkingMode.get()).as("Spring property binding reaches actual SDK request").isEqualTo("disabled");
         assertThat(count("translation", "true")).isEqualTo(1);
         assertThat(count("ai_usage_reservation", "status='COMMITTED'")).isEqualTo(1);
         assertThat(entitlements.usage(uid).translationsUsed()).isEqualTo(1);

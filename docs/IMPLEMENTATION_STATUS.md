@@ -179,3 +179,12 @@
 - 单独及完整入口均通过：后端 69 项单元（66 通过、3 真实模型跳过），数据库集成扩展为 35 项全部通过。报告 `tmp/acceptance/translation-disconnect-{it,full}.log`。测试仅使用受保护的独立验收库，清理自身账户及 HTTP 服务。
 - 修复 HTTP 评测工具把合法缓存 completed-only 响应判作流不完整的错误。现在单列首个可见文本、真实 delta、completed 和关闭时刻；缓存没有 delta 时首个可见文本就是 completed 到达时刻。已有部分 delta 仍必须与最终译文一致。
 - 评测协议 4 项通过，新增无 delta 缓存及部分流不一致的检查；冻结语料指纹不变。复现/修复记录 `tmp/acceptance/cache-report-{before,after}.log`。`http-timing-v2` 与旧版统计不混用。以上仍不是实际缓存 500ms 或真实首字 P95 的放行证据。
+
+### 供应商部分恢复后的开发选项核对（2026-10-15）
+
+- 12:28 本地受限复查重新得到完整结果：同一 `deepseek-v4-flash`，显式非思考诊断约 2.039 秒出现文本、2.129 秒完成，0 思考片段。报告 `tmp/acceptance/provider-stream-recheck-1230.json`。官方事故仍标记修复中，不等待全局状态恢复后才检查实际账号可用性。
+- 对同一公开开发输入，不显式设置思考选项的最小请求得到 128 个思考片段、0 可见文本，finish_reason=length；报告 `tmp/acceptance/provider-default-recheck-1231.json`。这证明较小输出预算可能被默认思考占用，不是改提示词中的逐词译法可解决的问题。
+- 原配置完整 HTTP 开发冒烟 3/3 成功：首字约 5.241/3.996/2.873 秒，其中一次场景生成约 68.4 秒。报告 `tmp/quality/de71d1b2c57d-smoke/`。保留模型名称，在本地私有选项显式设置 `thinking.type=disabled` 后再测：3/3 成功，首字约 4.512/2.170/2.175 秒，场景约 3.49/2.79 秒，缓存约 25–38ms；报告 `tmp/quality/4c4d8447b974-smoke/`。
+- 两次都是独立 DEV1–DEV3，未使用冻结验收集调优。供应商恢复进程与首次 SDK 初始化也会影响计时，不能将全部差异归因于选项，更不能把 3 条样例冒充 P95。未达 3 秒的样例仍保留，不排除首个冷请求。
+- 增强实际 SDK HTTP/数据库集成测试，验证 Spring 的 `extra-body.thinking.type=disabled` 属性确实成为请求体的 `thinking.type`，不是只看配置文本；通过，报告 `tmp/acceptance/thinking-binding-it.log`。当前模型、输出契约与提示版本均未改变，README 记录供应商专用配置方式；私有密钥不提交。
+- 开始完整冻结集验收前固定当前非思考配置。后续完整结果与人工评分决定质量和性能是否通过，不根据验收参考译文继续调整当前提示策略。
