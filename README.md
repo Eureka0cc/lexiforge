@@ -23,6 +23,8 @@
 
 浏览器界面验收：`cd frontend` 后执行 `npx playwright install chromium`、`npm run test:e2e`，覆盖桌面与移动视口。接口 fixture 与数据库集成证据分别记录。
 
+真实学习闭环可单独执行 `./scripts/verify-learning-journey.ps1`（需现有后端 jar、生产前端构建及私有模型配置）。使用全新独立库、正常 Free 额度，分别在桌面/移动生产页面注册账户、真实生成并编辑保存场景、翻译、查词详情、收藏和完成复习，再核对数据库关联及下次复习安排。浏览器不拦截接口、不注入业务记录；使用当前本地模型，会产生真实模型调用。报告和截图放在 `tmp/learning-journey/`，结束仅清理自身进程与库。这验证功能链路，不代替固定 200 条的人工语言质量评分。
+
 全部开发产物统一放到工作区的 `tmp/`：Maven 输出 `../tmp/backend`，前端构建输出 `../../tmp/frontend-dist`，浏览器报告/截图输出 `../../tmp/playwright`，类型信息与缓存使用对应子目录。目录均相对于各工具的项目目录解析，不提交 Git。真实 AI 小样本报告位于 `../tmp/acceptance`，不含密钥。
 
 ### 本地账户恢复
