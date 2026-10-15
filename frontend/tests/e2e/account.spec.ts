@@ -6,6 +6,7 @@ async function session(page: Page, malformed = false) {
     localStorage.setItem('user', malformed ? '{broken' : JSON.stringify(user))
     localStorage.setItem('access_token', 'fixture-token')
     localStorage.setItem('unrelated-preference', 'preserve')
+    if (malformed) sessionStorage.setItem('lexiforge:last-translation', 'private stale draft')
   }, { user, malformed })
 }
 async function respond(page: Page) {
@@ -23,6 +24,7 @@ test('损坏的账户缓存恢复到登录页', async ({ page }) => {
   await page.goto('/account')
   await expect(page.getByRole('heading', { name: '登录 LexiForge' })).toBeVisible()
   expect(await page.evaluate(() => localStorage.getItem('access_token'))).toBeNull()
+  expect(await page.evaluate(() => sessionStorage.getItem('lexiforge:last-translation'))).toBeNull()
   expect(await page.evaluate(() => localStorage.getItem('unrelated-preference'))).toBe('preserve')
 })
 

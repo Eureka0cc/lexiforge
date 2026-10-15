@@ -12,6 +12,8 @@ import {
 } from '@ant-design/icons-vue'
 import { api } from '../api'
 import type { Translation } from '../types'
+import { useAuthStore } from '../stores/auth'
+import { rememberTranslation } from '../lib/translationContinuation'
 
 interface DashboardStats {
   vocabularyCount: number
@@ -34,6 +36,7 @@ interface UsageSummary {
 }
 
 const router = useRouter()
+const auth = useAuthStore()
 const stats = ref<DashboardStats | null>(null)
 const usage = ref<UsageSummary | null>(null)
 const latestTranslation = ref<Translation | null>(null)
@@ -86,8 +89,8 @@ async function loadDashboard() {
 }
 
 function continueTranslation() {
-  if (latestTranslation.value) {
-    sessionStorage.setItem('lexiforge:last-translation', JSON.stringify(latestTranslation.value))
+  if (latestTranslation.value && auth.user) {
+    rememberTranslation(auth.user.id, latestTranslation.value)
   }
   router.push('/translate')
 }

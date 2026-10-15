@@ -4,7 +4,7 @@ async function fixture(page: Page, history = false) {
   await page.addInitScript(restore => {
     localStorage.setItem('user', JSON.stringify({ id: '7', email: 'ui@example.test', displayName: '验收用户', role: 'USER' }))
     localStorage.setItem('access_token', 'fixture-token')
-    if (restore) sessionStorage.setItem('lexiforge:last-translation', JSON.stringify({ id: '11', sourceText: 'Original source', translatedText: '上次完整译文', sourceLanguage: 'EN', targetLanguage: 'ZH', domainId: '2001', alternatives: [] }))
+    if (restore) sessionStorage.setItem('lexiforge:last-translation', JSON.stringify({ ownerId: '7', translation: { id: '11', sourceText: 'Original source', translatedText: '上次完整译文', sourceLanguage: 'EN', targetLanguage: 'ZH', domainId: '2001', alternatives: [] } }))
   }, history)
   await page.route('**/api/domains/v1', route => route.fulfill({ json: { success: true, data: [{ id: '2001', name: 'IT', code: 'IT', builtIn: true }] } }))
   await page.route('**/api/translations/v1*', route => route.fulfill({ json: { success: true, data: { items: [] } } }))

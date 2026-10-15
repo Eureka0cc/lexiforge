@@ -2,6 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { api } from '../api'
 import type { User } from '../types'
+import { clearStoredSession, saveStoredSession } from '../lib/authStorage'
+import { continuationKey } from '../lib/translationContinuation'
 
 interface AuthResponse {
   accessToken: string
@@ -11,7 +13,7 @@ interface AuthResponse {
 export const useAuthStore = defineStore('auth', () => {
   function storedUser(): User | null {
     try { return JSON.parse(localStorage.getItem('user') || 'null') as User | null }
-    catch { localStorage.removeItem('user'); localStorage.removeItem('access_token'); return null }
+    catch { clearStoredSession(); return null }
   }
   const user = ref<User | null>(storedUser())
   const loggedIn = computed(() => Boolean(user.value))
@@ -35,20 +37,26 @@ export const useAuthStore = defineStore('auth', () => {
   }
   function clear() {
     user.value = null
-    localStorage.removeItem('access_token')
-    localStorage.removeItem('user')
-    sessionStorage.removeItem('lexiforge:last-translation')
+    clearStoredSession()
   }
   async function reloadUser() {
     user.value = (await api.get<User>('/api/account/v1')).data
     localStorage.setItem('user', JSON.stringify(user.value))
   }
-  window.addEventListener('lexiforge:session-updated', () => { user.value = storedUser() })
-  window.addEventListener('storage', event => { if (event.key === 'user') user.value = storedUser() })
+  function syncUser() {
+    const previousId = user.value?.id
+    user.value = storedUser()
+    if (previousId !== user.value?.id) {
+      sessionStorage.removeItem(continuationKey)
+      // Discard mounted pages and their in-memory results on another tab's account switch.
+      location.reload()
+    }
+  }
+  window.addEventListener('lexiforge:session-updated', syncUser)
+  window.addEventListener('storage', event => { if (event.key === 'user') syncUser() })
 
   function save(data: AuthResponse) {
-    localStorage.setItem('access_token', data.accessToken)
-    localStorage.setItem('user', JSON.stringify(data.user))
+    saveStoredSession(data.accessToken, data.user)
     user.value = data.user
   }
 

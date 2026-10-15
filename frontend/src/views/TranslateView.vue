@@ -7,11 +7,14 @@ import { api, postSse } from '../api'
 import type { Domain, Lookup, LookupDetails, Translation } from '../types'
 import DocumentPane from '../components/translation/DocumentPane.vue'
 import { createFrameText } from '../lib/frameText'
+import { takeTranslation } from '../lib/translationContinuation'
+import { useAuthStore } from '../stores/auth'
 
 type Side = 'SOURCE' | 'TARGET'
 type MobileTab = 'source' | 'result'
 
 const router = useRouter()
+const auth = useAuthStore()
 const route = useRoute()
 const domains = ref<Domain[]>([])
 const domainId = ref('')
@@ -107,11 +110,8 @@ function requestId() {
   return crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 function hydrateContinuation() {
-  const saved = sessionStorage.getItem('lexiforge:last-translation')
-  if (!saved) return
-  try { selectHistory(JSON.parse(saved) as Translation) }
-  catch { /* 损坏的临时记录不影响翻译页启动。 */ }
-  finally { sessionStorage.removeItem('lexiforge:last-translation') }
+  const saved = takeTranslation(auth.user?.id ?? '')
+  if (saved) selectHistory(saved)
 }
 async function loadDomains() {
   domainsLoading.value = true
