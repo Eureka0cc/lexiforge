@@ -25,6 +25,7 @@ const translating = ref(false)
 const stopped = ref(false)
 const composing = ref(false)
 const translationError = ref('')
+const translationComplete = ref(false)
 const history = ref<Translation[]>([])
 const historyOpen = ref(false)
 const historyLoading = ref(false)
@@ -68,7 +69,7 @@ const displayBuffer = createFrameText(text => {
 
 const chars = computed(() => source.value.length)
 const visibleTranslation = computed(() => streamedText.value || result.value?.translatedText || '')
-const canLookup = computed(() => !!result.value && !stale.value && !translating.value && !translationError.value)
+const canLookup = computed(() => translationComplete.value && !!result.value && !stale.value && !translating.value && !translationError.value)
 
 onMounted(async () => {
   document.addEventListener('pointerdown', outsideLookup)
@@ -92,6 +93,7 @@ watch([source, sourceLanguage, targetLanguage, domainId], () => {
   controller?.abort()
   controller = null
   translating.value = false
+  translationComplete.value = false
   streamedText.value = ''
   stale.value = !!result.value
   stopped.value = false
@@ -151,7 +153,9 @@ async function translate(forceRefresh = false) {
   controller = aborter
   lookup.value = null
   lookupDetails.value = null
+  const fallback = forceRefresh && translationComplete.value && !stale.value ? result.value : null
   translating.value = true
+  translationComplete.value = false
   stopped.value = false
   streamedText.value = ''
   translationError.value = ''
@@ -165,6 +169,7 @@ async function translate(forceRefresh = false) {
         displayBuffer.flush()
         const translated = (data as { translation: Translation }).translation
         result.value = translated
+        translationComplete.value = true
         streamedText.value = translated.translatedText
         stale.value = false
         completed = true
@@ -176,7 +181,11 @@ async function translate(forceRefresh = false) {
     if (!completed && ownVersion === version) throw new Error('连接已中断，翻译未完成')
   } catch (error) {
     if (ownVersion !== version || aborter.signal.aborted) return
-    if (forceRefresh && result.value) { displayBuffer.clear(); streamedText.value = result.value.translatedText }
+    if (fallback) {
+      displayBuffer.clear()
+      streamedText.value = fallback.translatedText
+      translationComplete.value = true
+    }
     translationError.value = error instanceof Error ? error.message : '翻译未完成，请稍后重试'
   } finally { if (ownVersion === version) { displayBuffer.flush(); translating.value = false } }
 }
@@ -188,6 +197,7 @@ function stop() {
   controller?.abort()
   controller = null
   translating.value = false
+  translationComplete.value = false
   if (streamedText.value) translationError.value = '翻译已停止，当前内容未完成，不能查词或收藏'
 }
 function invalidate() { clearTimer(); displayBuffer.clear(); closeLookup(); version += 1; controller?.abort(); controller = null }
@@ -207,6 +217,7 @@ function selectHistory(item: Translation) {
   invalidate()
   suppressWatch = true
   result.value = item
+  translationComplete.value = true
   streamedText.value = item.translatedText
   source.value = item.sourceText
   sourceLanguage.value = item.sourceLanguage
@@ -341,7 +352,7 @@ async function copyTranslation() {
         <a-button @click="router.push('/domains')"><SettingOutlined />翻译场景</a-button>
         <a-button v-if="translating" danger @click="stop">停止</a-button>
         <a-button v-else type="primary" :disabled="!source.trim() || !domainId || sourceLanguage === targetLanguage" @click="translate(false)"><TranslationOutlined />立即翻译</a-button>
-        <a-button v-if="result && !translating" :disabled="stale || !source.trim() || !domainId || sourceLanguage === targetLanguage" title="忽略已有结果，重新调用 AI；成功后计入翻译额度" @click="translate(true)"><ReloadOutlined />重新翻译</a-button>
+        <a-button v-if="result && !translating" :disabled="!translationComplete || stale || !source.trim() || !domainId || sourceLanguage === targetLanguage" title="忽略已有结果，重新调用 AI；成功后计入翻译额度" @click="translate(true)"><ReloadOutlined />重新翻译</a-button>
       </div>
     </div>
     <a-alert v-if="translationError" class="workspace-alert" type="error" show-icon :message="translationError" closable @close="translationError = ''" />
