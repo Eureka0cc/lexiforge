@@ -74,14 +74,17 @@ jobs:
           npm run build
           npx playwright install --with-deps chromium
           npm run test:e2e -- --workers=2
+      - name: Resolve report directory
+        if: always()
+        run: echo "VERIFICATION_OUTPUT_ROOT=$(realpath -m ../tmp)" >> "$GITHUB_ENV"
       - name: Test reports
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: verification-reports
           path: |
-            ../tmp/backend/surefire-reports
-            ../tmp/backend/failsafe-reports
-            ../tmp/playwright
+            ${{ env.VERIFICATION_OUTPUT_ROOT }}/backend/surefire-reports
+            ${{ env.VERIFICATION_OUTPUT_ROOT }}/backend/failsafe-reports
+            ${{ env.VERIFICATION_OUTPUT_ROOT }}/playwright
           if-no-files-found: ignore
           retention-days: 7
