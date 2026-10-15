@@ -57,6 +57,11 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Backend and PostgreSQL integration
         run: mvn -B -Pintegration verify
+      - name: Frozen acceptance corpus integrity
+        run: |
+          node evaluation/build-corpus.mjs --check
+          node --check evaluation/run-http.mjs
+          node --test evaluation/run-http.test.mjs
       - name: Check PowerShell syntax
         shell: pwsh
         run: |

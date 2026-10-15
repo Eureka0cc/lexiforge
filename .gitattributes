@@ -1,0 +1,3 @@
+evaluation/*.jsonl text eol=lf
+evaluation/*.json text eol=lf
+evaluation/*.mjs text eol=lf

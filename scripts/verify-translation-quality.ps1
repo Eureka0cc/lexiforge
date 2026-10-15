@@ -22,7 +22,10 @@ try {
     & (Join-Path $PSScriptRoot 'start-local.ps1') -InstanceName $instance -DatabaseUrl "jdbc:postgresql://localhost:$DatabasePort/$database" -DatabaseUser $DatabaseUser -DatabasePassword $DatabasePassword -SkipBuild | Out-Null
     $runtime=& (Join-Path $PSScriptRoot 'status-local.ps1') -InstanceName $instance -Json | ConvertFrom-Json
     if(!$runtime.healthy) { throw '实际模型验收启动失败' }
-    @{ mode=$Mode; jarSha256=$runtime.jarSha256; sourceCommit=(& git -C $paths.Repo rev-parse HEAD); ai='current local model; no override'; quota='normal Pro through local simulator'; database='isolated, removed after run' } |
+    $localConfig=Join-Path $paths.Repo 'src/main/resources/application-local.yml'
+    $modelLines=@(Select-String -LiteralPath $localConfig -Pattern '^[ \t]+model[ \t]*:[ \t]*\S+' | ForEach-Object {$_.Line.Trim()})
+    $thinkingLines=@(Select-String -LiteralPath $localConfig -Pattern '^\s+type\s*:\s*(disabled|enabled)\s*$' | ForEach-Object {$_.Line.Trim()})
+    @{ mode=$Mode; jarSha256=$runtime.jarSha256; sourceCommit=(& git -C $paths.Repo rev-parse HEAD); ai='current local model; no override'; modelConfig=$modelLines; modelEnvironment=$env:DEEPSEEK_MODEL; thinkingConfig=$thinkingLines; localConfigSha256=(Get-FileHash -LiteralPath $localConfig -Algorithm SHA256).Hash; quota='normal Pro through local simulator'; database='isolated, removed after run' } |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $scratch 'runtime.json') -Encoding utf8
     & node (Join-Path $paths.Repo 'evaluation/run-http.mjs') "--base=$($runtime.backendUrl)" "--mode=$Mode" "--output=$scratch"
     $result=$LASTEXITCODE
