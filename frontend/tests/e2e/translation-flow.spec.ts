@@ -1,4 +1,5 @@
 import { test, expect, type Page, type Route } from '@playwright/test'
+import { startTranslationUiServer } from '../../../scripts/fixtures/translation-ui-server.mjs'
 
 async function fixture(page: Page, history = false) {
   await page.addInitScript(restore => {
@@ -98,3 +99,69 @@ test('编辑保留并标记旧译文，过期请求不能覆盖新结果', async
   await expect(page.locator('.translated-document')).not.toContainText('过期结果')
   await expect(page.locator('.translated-document')).not.toHaveClass(/stale/)
 })
+
+for (const partial of ['', '已收到的半句']) {
+  test(`停止${partial ? '生成中' : '等待中'}的请求会关闭真实 HTTP 连接，保持未完成并允许重试`, async ({ page }) => {
+    const server = await startTranslationUiServer({ partial })
+    try {
+      await page.route('**/api/translations/stream/v1', route => route.continue({ url: server.url + '/api/translations/stream/v1' }))
+      const editor = await fixture(page)
+      await editor.fill('Stop this request')
+      await page.getByRole('button', { name: /立即翻译/ }).click()
+      await expect.poll(() => server.state.requests.length).toBe(1)
+      if (partial) await expect(page.locator('.translated-document')).toContainText(partial)
+      await page.getByRole('button', { name: /^停\s*止$/ }).click()
+      await expect.poll(() => server.state.connectionsClosed).toBe(1)
+      await expect(page.locator('.result-document .document-pane-footer')).toContainText('已停止')
+      if (!await page.getByRole('button', { name: '复制译文' }).isVisible()) await page.getByRole('button', { name: '译文', exact: true }).click()
+      await expect(page.getByRole('button', { name: '复制译文' })).toBeDisabled()
+      await page.getByRole('button', { name: /立即翻译/ }).click()
+      await expect.poll(() => server.state.requests.length).toBe(2)
+      server.complete(1, '重试完成')
+      await expect(page.locator('.translated-document')).toContainText('重试完成')
+      await expect(page.getByRole('button', { name: '复制译文' })).toBeEnabled()
+    } finally { await server.close() }
+  })
+}
+
+test('真实 HTTP 流断线保留部分内容，禁用复制，手动重试恢复', async ({ page }) => {
+  const server = await startTranslationUiServer({ partial: '断线前收到的内容' })
+  try {
+    await page.route('**/api/translations/stream/v1', route => route.continue({ url: server.url + '/api/translations/stream/v1' }))
+    const editor = await fixture(page)
+    await editor.fill('Connection failure')
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect(page.locator('.translated-document')).toContainText('断线前收到的内容')
+    server.disconnect(0)
+    await expect(page.locator('.workspace-alert')).toContainText('翻译连接已中断')
+    if (!await page.getByRole('button', { name: '复制译文' }).isVisible()) await page.getByRole('button', { name: '译文', exact: true }).click()
+    await expect(page.getByRole('button', { name: '复制译文' })).toBeDisabled()
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect.poll(() => server.state.requests.length).toBe(2)
+    server.complete(1, '重试已完成')
+    await expect(page.locator('.translated-document')).toContainText('重试已完成')
+    await expect(page.getByRole('button', { name: '复制译文' })).toBeEnabled()
+  } finally { await server.close() }
+})
+
+for (const failure of ['quota', 'offline', 'eof'] as const) {
+  test(`${failure} 不清空原文或伪造完成，不后台重试，手动重试可恢复`, async ({ page }) => {
+    let attempts = 0
+    await page.route('**/api/translations/stream/v1', async route => {
+      attempts++
+      if (attempts > 1) return success(route, '恢复后的完整译文')
+      if (failure === 'quota') await route.fulfill({ status: 429, json: { code: 'DAILY_QUOTA_EXCEEDED', message: '今日额度已用完' } })
+      else if (failure === 'offline') await route.abort('failed')
+      else await route.fulfill({ contentType: 'text/event-stream', body: 'event: delta\ndata: {"text":"未完成的内容"}\n\n' })
+    })
+    const editor = await fixture(page, true)
+    await editor.fill('Preserve my input')
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect(page.locator('.workspace-alert')).toContainText(failure === 'quota' ? '今日额度已用完' : failure === 'offline' ? '无法连接翻译服务' : '翻译未完成')
+    await expect(editor).toHaveValue('Preserve my input')
+    expect(attempts).toBe(1)
+    await page.getByRole('button', { name: /立即翻译/ }).click()
+    await expect(page.locator('.translated-document')).toContainText('恢复后的完整译文')
+    expect(attempts).toBe(2)
+  })
+}

@@ -378,8 +378,8 @@ async function copyTranslation() {
           <a-alert v-else-if="translating" type="info" show-icon message="正在翻译…" />
           <div v-if="result?.alternatives?.length && !stale && !translating" class="alternatives"><strong>其他可能含义</strong><div v-for="item in result.alternatives" :key="item.meaning">{{ item.meaning }}<small v-if="item.note"> — {{ item.note }}</small></div></div>
         </article>
-        <div v-else class="result-state"><TranslationOutlined /><strong>{{ translating ? '正在连接翻译服务…' : '译文将在这里显示' }}</strong></div>
-        <template #footer><span>{{ translating ? '正在翻译' : canLookup ? '完成 · 可点击或划选查词' : translationError ? '未完成' : '等待翻译' }}</span></template>
+        <div v-else class="result-state"><TranslationOutlined /><strong>{{ translating ? '正在连接翻译服务…' : stopped ? '已停止，可重新翻译' : '译文将在这里显示' }}</strong></div>
+        <template #footer><span role="status">{{ translating ? '正在翻译' : stopped ? '已停止' : canLookup ? '完成 · 可点击或划选查词' : translationError ? '未完成' : '等待翻译' }}</span></template>
       </DocumentPane>
     </div>
   </section>

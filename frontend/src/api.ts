@@ -59,7 +59,9 @@ export async function postSse(
   signal: AbortSignal,
   onMessage: (message: SseMessage) => void,
 ) {
-  const send = () => fetch(url, {
+  const serialized = JSON.stringify(body)
+  const send = async () => {
+    try { return await fetch(url, {
     method: 'POST',
     credentials: 'include',
     headers: {
@@ -67,9 +69,13 @@ export async function postSse(
       Accept: 'text/event-stream',
       ...(localStorage.getItem('access_token') ? { Authorization: `Bearer ${localStorage.getItem('access_token')}` } : {}),
     },
-    body: JSON.stringify(body),
+    body: serialized,
     signal,
-  })
+    }) } catch (error) {
+      if (signal.aborted) throw error
+      throw new Error('无法连接翻译服务，请检查网络后重试')
+    }
+  }
   let response = await send()
   // HTTP 401 表示尚未开始生成，只允许在此时续期并重发一次。
   if (response.status === 401) {
@@ -87,5 +93,11 @@ export async function postSse(
     throw new Error(reason)
   }
 
-  await readSseStream(response.body, onMessage)
+  try { await readSseStream(response.body, onMessage) }
+  catch (error) {
+    if (signal.aborted) throw error
+    if (error instanceof TypeError) throw new Error('翻译连接已中断，当前内容未完成，请重试')
+    if (error instanceof SyntaxError) throw new Error('翻译响应格式不正确，请重试')
+    throw error
+  }
 }

@@ -61,6 +61,7 @@ jobs:
         run: |
           node evaluation/build-corpus.mjs --check
           node --check evaluation/run-http.mjs
+          node --check frontend/tests/runtime/translation-feedback.mjs
           node --test evaluation/run-http.test.mjs
       - name: Check PowerShell syntax
         shell: pwsh

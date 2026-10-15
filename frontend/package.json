@@ -7,7 +7,8 @@
     "dev": "vite --configLoader runner",
     "build": "vue-tsc -b && vite build --configLoader runner",
     "test": "vitest run --configLoader runner",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:feedback": "node tests/runtime/translation-feedback.mjs"
   },
   "dependencies": {
     "@ant-design/icons-vue": "^7.0.1",
