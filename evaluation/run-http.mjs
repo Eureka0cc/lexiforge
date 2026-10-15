@@ -62,7 +62,7 @@ async function scene(row, account) {
 }
 async function translate(row, account, domainId, forceRefresh = true) {
   const started = performance.now();
-  let firstDeltaMs = null, translation = null, buffer = '', visible = '', eventCount = 0;
+  let firstDeltaMs = null, completedEventMs = null, translation = null, buffer = '', visible = '', eventCount = 0;
   const response = await fetch(new URL('/api/translations/stream/v1', base), {
     method: 'POST', signal: AbortSignal.timeout(100_000),
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${account.token}`, Accept: 'text/event-stream' },
@@ -80,7 +80,7 @@ async function translate(row, account, domainId, forceRefresh = true) {
       if (!data) continue;
       const value = JSON.parse(data); eventCount++;
       if (event === 'delta' && value.text) { firstDeltaMs ??= performance.now() - started; visible += value.text; }
-      if (event === 'completed') translation = value.translation;
+      if (event === 'completed') { translation = value.translation; completedEventMs = performance.now() - started; }
       if (event === 'error') throw new Error(`SSE ${value.code}`);
     }
   };
@@ -92,14 +92,17 @@ async function translate(row, account, domainId, forceRefresh = true) {
       buffer = buffer.replace(/\r\n/g, '\n'); consume();
       if (chunk.done) break;
     }
-    if (!translation || firstDeltaMs === null || visible !== translation.translatedText) throw new Error('Incomplete or mismatched stream');
-    return { translation, firstDeltaMs, completedMs: performance.now() - started, eventCount,
+    if (!translation || completedEventMs === null || typeof translation.translatedText !== 'string' || !translation.translatedText
+      || (firstDeltaMs !== null && visible !== translation.translatedText)) throw new Error('Incomplete or mismatched stream');
+    return { translation, firstDeltaMs, firstVisibleMs: firstDeltaMs ?? completedEventMs,
+      completedMs: completedEventMs, streamClosedMs: performance.now() - started,
+      delivery: firstDeltaMs === null ? 'completed-only' : 'streamed', eventCount,
       missingTokens: row.mustPreserve.filter(token => !translation.translatedText.includes(token)) };
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock(); }
 }
 const percentile = (values, p) => values.length ? [...values].sort((a, b) => a - b)[Math.ceil(values.length * p) - 1] : null;
 const metadata = { runId, mode, startedAt: new Date().toISOString(), corpusSha256: manifest.sha256,
-  requestOrigin: base.origin, timingScope: 'HTTP request -> visible SSE delta / completed stream; auth and scene generation measured separately',
+  requestOrigin: base.origin, timingVersion: 'http-timing-v2', timingScope: 'HTTP request -> first visible text (delta or completed) / completed event; stream closure, auth and scene generation separate',
   modelSelection: 'unchanged local application config', humanReview: 'PENDING',
   warning: 'No automatic semantic or human quality pass is asserted. Failures remain in the denominator.' };
 writeFileSync(resolve(out, 'metadata.json'), JSON.stringify(metadata, null, 2));
@@ -119,7 +122,7 @@ async function run(row, index, useScene = true) {
   } catch (error) { return { id: row.id, category: row.category, lengthBand: row.lengthBand, success: false,
     failedAfterMs: performance.now() - began, error: error.message }; }
 }
-function record(row) { rows.push(row); appendFileSync(resolve(out, 'results.jsonl'), JSON.stringify(row) + '\n'); console.log(`${rows.length}: ${row.id} ${row.success ? `${Math.round(row.firstDeltaMs)}ms/${Math.round(row.completedMs)}ms` : row.error}`); }
+function record(row) { rows.push(row); appendFileSync(resolve(out, 'results.jsonl'), JSON.stringify(row) + '\n'); console.log(`${rows.length}: ${row.id} ${row.success ? `${Math.round(row.firstVisibleMs)}ms/${Math.round(row.completedMs)}ms` : row.error}`); }
 if (mode === 'load') {
   // Pre-admit 20 independent fixture accounts before a shared barrier; all sources differ.
   await Promise.all(Array.from({ length: 20 }, (_, index) => user(index)));
@@ -133,13 +136,16 @@ if (mode === 'load') {
 const successful = rows.filter(row => row.success);
 const summary = { ...metadata, finishedAt: new Date().toISOString(), total: rows.length, successful: successful.length,
   errors: rows.length - successful.length, errorRate: (rows.length - successful.length) / rows.length,
-  firstDeltaP95Ms: percentile(successful.map(row => row.firstDeltaMs), .95),
+  firstVisibleP95Ms: percentile(successful.map(row => row.firstVisibleMs), .95),
+  firstDeltaSamples: successful.filter(row => row.firstDeltaMs !== null).length,
+  firstDeltaP95Ms: percentile(successful.map(row => row.firstDeltaMs).filter(value => value !== null), .95),
   tokenPreservationFailures: successful.filter(row => row.missingTokens.length).map(row => row.id),
   lengths: Object.fromEntries(['short', 'medium', 'long'].map(band => [band, {
     total: rows.filter(row => row.lengthBand === band).length,
     completedP95Ms: percentile(successful.filter(row => row.lengthBand === band).map(row => row.completedMs), .95),
     overBudget: successful.filter(row => row.lengthBand === band && row.completedMs > ({ short: 8000, medium: 20000, long: 60000 })[band]).length,
-  }])), cache: rows.filter(row => row.cache).map(row => ({ id: row.id, success: row.cache.success, completedMs: row.cache.completedMs, error: row.cache.error })),
+  }])), cache: rows.filter(row => row.cache).map(row => ({ id: row.id, success: row.cache.success, delivery: row.cache.delivery,
+    firstVisibleMs: row.cache.firstVisibleMs, completedMs: row.cache.completedMs, streamClosedMs: row.cache.streamClosedMs, error: row.cache.error })),
 };
 writeFileSync(resolve(out, 'summary.json'), JSON.stringify(summary, null, 2));
 const quote = value => '"' + String(value ?? '').replaceAll('"', '""') + '"';
@@ -151,5 +157,5 @@ writeFileSync(resolve(out, 'human-review.csv'), '\ufeff' + [header, ...rows.map(
 writeFileSync(resolve(out, 'human-review.json'), JSON.stringify({ corpusSha256: manifest.sha256, runId,
   rows: rows.map(row => ({ id: row.id, accuracy: null, naturalness: null, sceneFollow: null,
     criticalFactsPreserved: null, injectionSafe: null, reviewer: '', notes: '' })) }, null, 2));
-console.log(`Report: ${out}; ${summary.successful}/${summary.total}; first delta P95=${summary.firstDeltaP95Ms}ms; HUMAN REVIEW PENDING`);
+console.log(`Report: ${out}; ${summary.successful}/${summary.total}; first visible P95=${summary.firstVisibleP95Ms}ms; HUMAN REVIEW PENDING`);
 if (summary.errors) process.exitCode = 1;

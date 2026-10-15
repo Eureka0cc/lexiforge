@@ -7,7 +7,7 @@ import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 
 // Protocol fixture only: proves runner behavior, never model quality/performance.
-async function fixture(callback, expectedConcurrency = 1, failFirstStream = false) {
+async function fixture(callback, expectedConcurrency = 1, failFirstStream = false, mismatched = false) {
   const calls = []; let scenes = 0, active = 0, peak = 0;
   let streamCount = 0;
   const waiting = [];
@@ -34,7 +34,8 @@ async function fixture(callback, expectedConcurrency = 1, failFirstStream = fals
       active++; peak = Math.max(peak, active);
       response.setHeader('Content-Type', 'text/event-stream');
       const actual = `测试🙂${body.sourceText}`;
-      const wire = Buffer.from(`event: started\r\ndata: {}\r\n\r\nevent: delta\r\ndata: ${JSON.stringify({ text: actual })}\r\n\r\nevent: completed\r\ndata: ${JSON.stringify({ translation: { translatedText: actual } })}\r\n\r\n`);
+      const delta = body.forceRefresh ? `event: delta\r\ndata: ${JSON.stringify({ text: mismatched ? 'mismatched delta' : actual })}\r\n\r\n` : '';
+      const wire = Buffer.from(`event: started\r\ndata: {}\r\n\r\n${delta}event: completed\r\ndata: ${JSON.stringify({ translation: { translatedText: actual } })}\r\n\r\n`);
       // Split UTF-8 and CRLF across transport chunks deliberately.
       for (let index = 0; index < wire.length; index += 7) response.write(wire.subarray(index, index + 7));
       if (expectedConcurrency > 1) {
@@ -62,6 +63,10 @@ test('complete quality protocol preserves all rows and keeps references out of r
     const { output, summary } = await run(base, 'quality');
     assert.equal(summary.total, 200); assert.equal(summary.successful, 200);
     assert.equal(summary.humanReview, 'PENDING'); assert.equal(summary.cache.length, 5);
+    assert.ok(summary.cache.every(row => row.success), 'valid completed-only cache responses must succeed');
+    assert.ok(summary.cache.every(row => row.delivery === 'completed-only' && row.firstVisibleMs === row.completedMs));
+    assert.ok(summary.cache.every(row => row.streamClosedMs >= row.completedMs));
+    assert.equal(summary.firstDeltaSamples, 200);
     assert.equal(calls.filter(call => call.path === '/api/scenes/generate/v1').length, 120);
     assert.equal(calls.filter(call => call.path.startsWith('/api/domains/') && call.method === 'PATCH').length, 116);
     for (const call of calls.filter(call => call.path === '/api/scenes/generate/v1')) assert.deepEqual(Object.keys(call.body).sort(), ['description','requestId']);
@@ -90,4 +95,10 @@ test('a failed stream stays in the report denominator and does not stop later ca
     assert.equal(results[0].error, 'SSE AI_TIMEOUT');
     assert.deepEqual(results.map(row => row.id), ['DEV1','DEV2','DEV3']);
   }, 1, true);
+});
+test('partial deltas disagreeing with the completed result cannot become successful reports', async () => {
+  await fixture(async ({ base }) => {
+    const { summary } = await run(base, 'smoke', 1);
+    assert.equal(summary.total, 3); assert.equal(summary.successful, 0);
+  }, 1, false, true);
 });
