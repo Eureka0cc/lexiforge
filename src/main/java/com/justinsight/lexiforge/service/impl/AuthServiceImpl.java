@@ -3,6 +3,7 @@ package com.justinsight.lexiforge.service.impl;
 import com.justinsight.lexiforge.service.AuthService;
 import com.justinsight.lexiforge.service.EventService;
 import com.justinsight.lexiforge.security.JwtService;
+import com.justinsight.lexiforge.security.AuthTokens;
 import com.justinsight.lexiforge.model.entity.RefreshTokenEntity;
 import com.justinsight.lexiforge.repository.RefreshTokenRepository;
 import com.justinsight.lexiforge.model.entity.UserEntity;
@@ -49,7 +50,8 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public Tokens register(String email, String password, String displayName) {
-        String normalized = email.trim().toLowerCase();
+        AuthTokens.validatePassword(password);
+        String normalized = email.trim().toLowerCase(java.util.Locale.ROOT);
         if (users.existsByEmailIgnoreCase(normalized)) {
             throw new ApiException(HttpStatus.CONFLICT, "EMAIL_EXISTS", "该邮箱已注册");
         }
@@ -58,7 +60,10 @@ public class AuthServiceImpl implements AuthService {
         user.email = normalized;
         user.passwordHash = encoder.encode(password);
         user.displayName = displayName.trim();
-        users.saveAndFlush(user);
+        try { users.saveAndFlush(user); }
+        catch (org.springframework.dao.DataIntegrityViolationException exception) {
+            throw new ApiException(HttpStatus.CONFLICT, "EMAIL_EXISTS", "该邮箱已注册");
+        }
         jdbc.sql("INSERT INTO subscription(id,user_id,plan_code,status) VALUES (:id,:uid,'FREE','FREE')")
                 .param("id", ids.nextId()).param("uid", user.id).update();
         events.track(user.id, "USER_REGISTERED", null);
@@ -68,7 +73,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public Tokens login(String email, String password) {
-        UserEntity user = users.findByEmailIgnoreCase(email.trim()).orElseThrow(this::unauthorized);
+        UserEntity user = users.findByEmailForUpdate(email.trim()).orElseThrow(this::unauthorized);
         if (!encoder.matches(password, user.passwordHash)) {
             throw unauthorized();
         }
@@ -79,37 +84,60 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public Tokens refresh(String raw) {
+        RefreshTokenEntity candidate = refreshTokens.findByTokenHashAndRevokedAtIsNull(hash(raw)).orElseThrow(this::unauthorized);
+        UserEntity user = users.findByIdForUpdate(candidate.userId).orElseThrow(this::unauthorized);
         RefreshTokenEntity old = refreshTokens.findByTokenHashAndRevokedAtIsNull(hash(raw))
                 .filter(token -> token.expiresAt.isAfter(Instant.now()))
                 .orElseThrow(this::unauthorized);
+        long active = jdbc.sql("SELECT count(*) FROM auth_session WHERE id=:id AND user_id=:uid AND revoked_at IS NULL AND expires_at>now()")
+                .param("id", old.sessionId).param("uid", user.id).query(Long.class).single();
+        if (active != 1) throw unauthorized();
         old.revokedAt = Instant.now();
         refreshTokens.save(old);
-        return tokens(users.findById(old.userId).orElseThrow(this::unauthorized));
+        return tokens(user, old.sessionId);
     }
 
     @Override
     @Transactional
     public void logout(String raw) {
         if (raw == null) return;
-        refreshTokens.findByTokenHashAndRevokedAtIsNull(hash(raw)).ifPresent(token -> {
-            token.revokedAt = Instant.now();
-            refreshTokens.save(token);
+        refreshTokens.findByTokenHash(hash(raw)).ifPresent(token -> {
+            users.findByIdForUpdate(token.userId).orElseThrow(this::unauthorized);
+            jdbc.sql("UPDATE auth_session SET revoked_at=now() WHERE id=:id AND user_id=:uid AND revoked_at IS NULL")
+                    .param("id", token.sessionId).param("uid", token.userId).update();
+            jdbc.sql("UPDATE refresh_token SET revoked_at=now() WHERE session_id=:id AND revoked_at IS NULL")
+                    .param("id", token.sessionId).update();
         });
     }
 
+    @Override @Transactional(readOnly = true)
+    public AuthDto.UserView current(long userId) { return userView(users.findById(userId).orElseThrow(this::unauthorized)); }
+
+    private AuthDto.UserView userView(UserEntity user) {
+        return new AuthDto.UserView(user.id.toString(), user.email, user.displayName, user.role, user.emailVerified);
+    }
+
     private Tokens tokens(UserEntity user) {
+        long sessionId = ids.nextId();
+        jdbc.sql("INSERT INTO auth_session(id,user_id,expires_at) VALUES(:id,:uid,:expires)")
+                .param("id", sessionId).param("uid", user.id).param("expires", java.sql.Timestamp.from(Instant.now().plus(jwt.refreshDays(), ChronoUnit.DAYS))).update();
+        return tokens(user, sessionId);
+    }
+
+    private Tokens tokens(UserEntity user, long sessionId) {
         byte[] bytes = new byte[32];
         random.nextBytes(bytes);
         String raw = Base64.getUrlEncoder().withoutPadding().encodeToString(bytes);
         RefreshTokenEntity token = new RefreshTokenEntity();
         token.id = ids.nextId();
         token.userId = user.id;
+        token.sessionId = sessionId;
         token.tokenHash = hash(raw);
         token.expiresAt = Instant.now().plus(jwt.refreshDays(), ChronoUnit.DAYS);
         refreshTokens.save(token);
-        AuthDto.UserView view = new AuthDto.UserView(user.id.toString(), user.email,
-                user.displayName, user.role);
-        return new Tokens(jwt.issue(user), raw, jwt.refreshDays() * 86400, view);
+        jdbc.sql("UPDATE auth_session SET expires_at=:expires WHERE id=:id").param("expires", java.sql.Timestamp.from(token.expiresAt)).param("id", sessionId).update();
+        AuthDto.UserView view = userView(user);
+        return new Tokens(jwt.issue(user, sessionId), raw, jwt.refreshDays() * 86400, view);
     }
 
     private ApiException unauthorized() {

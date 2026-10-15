@@ -5,6 +5,7 @@ export interface User {
   email: string
   displayName: string
   role: 'USER' | 'ADMIN'
+  emailVerified?: boolean
 }
 
 export interface DomainTerm {

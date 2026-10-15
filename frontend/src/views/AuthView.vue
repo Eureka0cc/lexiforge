@@ -3,6 +3,7 @@ import { reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { CodeOutlined, LockOutlined, MailOutlined, UserOutlined } from '@ant-design/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { api } from '../api'
 
 type AuthMode = 'login' | 'register'
 
@@ -13,6 +14,20 @@ const loading = ref(false)
 const errorMessage = ref('')
 const previewOpen = ref(false)
 const form = reactive({ email: '', password: '', displayName: '' })
+const recoveryOpen = ref(false)
+const recoveryEmail = ref('')
+const recoveryLoading = ref(false)
+const recoverySent = ref(false)
+const recoveryError = ref('')
+async function requestRecovery() {
+  recoveryLoading.value = true; recoveryError.value = ''; recoverySent.value = false
+  try {
+    await api.post('/api/auth/password-reset/request/v1', { email: recoveryEmail.value })
+    recoverySent.value = true
+  } catch (failure) {
+    recoveryError.value = (failure as { response?: { data?: { message?: string } } }).response?.data?.message ?? '操作未完成，请重试'
+  } finally { recoveryLoading.value = false }
+}
 
 function switchMode(nextMode: AuthMode) {
   mode.value = nextMode
@@ -52,7 +67,7 @@ async function submit() {
       <div class="preview-intro">
         <span class="preview-kicker"><CodeOutlined /> 产品预览</span>
         <h2 id="preview-title">在真实语境中理解技术术语</h2>
-        <p>翻译开发文档时保留代码结构、固定术语译法，并把值得复习的词加入个人词库。</p>
+        <p>翻译开发文档时保留代码结构、理解语境中的专业含义，并把值得复习的词加入个人词库。</p>
         <a-button class="mobile-preview-toggle" type="link" @click="previewOpen = !previewOpen">
           {{ previewOpen ? '收起批注示例' : '查看术语批注示例' }}
         </a-button>
@@ -144,6 +159,7 @@ async function submit() {
             {{ mode === 'login' ? '登录' : '创建账户' }}
           </a-button>
         </a-form>
+        <a-button v-if="mode === 'login'" type="link" @click="recoveryEmail = form.email; recoverySent = false; recoveryError = ''; recoveryOpen = true">找回密码</a-button>
 
         <p class="auth-switch-copy">
           {{ mode === 'login' ? '还没有账户？' : '已经有账户？' }}
@@ -153,6 +169,14 @@ async function submit() {
         </p>
       </div>
     </section>
+    <a-modal v-model:open="recoveryOpen" title="找回密码" :footer="null">
+      <a-alert v-if="recoveryError" type="error" show-icon :message="recoveryError" />
+      <a-alert v-if="recoverySent" type="success" show-icon message="如果邮箱已注册，重置邮件已进入发送队列。请查看邮件中的链接。" />
+      <a-form :model="{ email: recoveryEmail }" layout="vertical" @finish="requestRecovery">
+        <a-form-item label="账户邮箱" name="email" :rules="[{ required: true, type: 'email', message: '请输入注册时使用的邮箱' }]"><a-input v-model:value="recoveryEmail" type="email" autocomplete="email" /></a-form-item>
+        <a-button type="primary" html-type="submit" :loading="recoveryLoading">申请重置邮件</a-button>
+      </a-form>
+    </a-modal>
   </main>
 </template>
 

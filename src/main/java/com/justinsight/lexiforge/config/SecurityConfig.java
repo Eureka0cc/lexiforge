@@ -30,6 +30,7 @@ public class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(); }
 
     @Bean SecurityFilterChain chain(HttpSecurity http, JwtAuthenticationFilter jwt,
+                                    com.justinsight.lexiforge.security.AuthOriginFilter originFilter,
                                     ObjectMapper objectMapper) throws Exception {
         return http.csrf(csrf -> csrf.disable()).cors(cors -> {})
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -51,6 +52,7 @@ public class SecurityConfig {
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated())
+                .addFilterBefore(originFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(jwt, UsernamePasswordAuthenticationFilter.class).build();
     }
 

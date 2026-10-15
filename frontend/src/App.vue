@@ -30,6 +30,7 @@ const routeLabels: Record<string, string> = {
   '/confusions': '易混词',
   '/plans': '套餐与用量',
   '/admin': '运营指标',
+  '/account': '账户与安全',
 }
 const inLearningWorkspace = computed(() => learningPaths.has(route.path))
 const selectedPrimaryKeys = computed(() => [inLearningWorkspace.value ? 'learning' : 'translate'])
@@ -102,6 +103,7 @@ async function logout() {
                     <span>{{ auth.user?.email }}</span>
                   </li>
                   <a-menu-divider />
+                  <a-menu-item key="account" @click="navigate('/account')"><SettingOutlined />账户与安全</a-menu-item>
                   <a-menu-item key="domains" @click="navigate('/domains')"><SettingOutlined />AI 翻译场景</a-menu-item>
                   <a-menu-item key="plans" @click="navigate('/plans')"><CrownOutlined />套餐与用量</a-menu-item>
                   <a-menu-item v-if="auth.user?.role === 'ADMIN'" key="admin" @click="navigate('/admin')"><DashboardOutlined />运营指标</a-menu-item>

@@ -25,6 +25,14 @@
 
 全部开发产物统一放到工作区的 `tmp/`：Maven 输出 `../tmp/backend`，前端构建输出 `../../tmp/frontend-dist`，浏览器报告/截图输出 `../../tmp/playwright`，类型信息与缓存使用对应子目录。目录均相对于各工具的项目目录解析，不提交 Git。真实 AI 小样本报告位于 `../tmp/acceptance`，不含密钥。
 
+### 本地账户恢复
+
+本轮先以本地运行验收，不创建云资源。`dev` 配置默认启用文件邮件模式：在登录页申请找回密码，或在“账户与安全”申请邮箱验证后，后台将测试邮件写入工作区 `tmp/auth-mail/*.txt`。打开文件中的链接即可继续；链接 15 分钟内有效且只能使用一次。保持前端地址与 `FRONTEND_ORIGIN` 配置一致，默认 `http://localhost:5173`。
+
+邮件队列在 PostgreSQL 中加密存储；`AUTH_MAIL_SECRET` 至少 32 个字符，开发默认密钥仅用于本机测试，修改密钥会使既有待发邮件不可解密。`AUTH_MAIL_MODE=disabled` 关闭账户邮件；文件模式只允许 `dev`/`test`。本轮未连接真实 SMTP。
+
+重置密码会立即撤销所有已有访问和刷新会话；退出登录会撤销当前会话及它轮换出的刷新凭据。浏览器认证接口检查 Origin，刷新 Cookie 使用 HttpOnly、SameSite=Lax；本地 HTTP 保持 `AUTH_SECURE_COOKIE=false`，HTTPS 环境才设为 true。新密码至少 8 个字符且 UTF-8 编码不超过 72 字节。
+
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
 ## 功能特性

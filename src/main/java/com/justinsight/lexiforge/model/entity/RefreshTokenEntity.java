@@ -11,6 +11,7 @@ public class RefreshTokenEntity {
     public Long id;
     @Column(name = "user_id", nullable = false)
     public Long userId;
+    @Column(name = "session_id", nullable = false) public Long sessionId;
     @Column(name = "token_hash", nullable = false, unique = true)
     public String tokenHash;
     @Column(name = "expires_at", nullable = false)

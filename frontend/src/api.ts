@@ -20,6 +20,7 @@ export function refreshSession() {
     refreshPromise = api.post('/api/auth/refresh/v1').then(({ data }) => {
       localStorage.setItem('access_token', data.accessToken)
       localStorage.setItem('user', JSON.stringify(data.user))
+      window.dispatchEvent(new Event('lexiforge:session-updated'))
     }).catch(error => {
       localStorage.removeItem('access_token')
       localStorage.removeItem('user')
@@ -34,6 +35,7 @@ api.interceptors.response.use(response=>{
   if(body&&typeof body==='object'&&typeof body.success==='boolean'&&'data'in body)response.data=body.data
   return response
 },async error=>{
+  if (axios.isCancel(error)) return Promise.reject(error)
   const original=error.config
   if(error.response?.status===401&&!original?._retry&&!original?.url?.includes('/auth/')){
     original._retry=true

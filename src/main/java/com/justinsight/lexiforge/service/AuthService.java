@@ -10,6 +10,7 @@ public interface AuthService {
     Tokens refresh(String raw);
 
     void logout(String raw);
+    AuthDto.UserView current(long userId);
 
     record Tokens(String accessToken, String refreshToken, long refreshMaxAge,
                   AuthDto.UserView user) {}

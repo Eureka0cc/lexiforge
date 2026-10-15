@@ -17,6 +17,8 @@ public class UserEntity {
     public String displayName;
     @Column(nullable = false)
     public String role = "USER";
+    @Column(name = "email_verified", nullable = false) public boolean emailVerified;
+    @Column(name = "session_version", nullable = false) public long sessionVersion;
     @Column(name = "created_at", nullable = false)
     public Instant createdAt = Instant.now();
     @Column(name = "updated_at", nullable = false)

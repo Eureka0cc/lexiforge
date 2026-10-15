@@ -4,6 +4,10 @@ spring:
     activate:
       on-profile: dev
 app:
+  auth:
+    mail:
+      mode: ${AUTH_MAIL_MODE:file}
+      secret: ${AUTH_MAIL_SECRET:development-only-auth-mail-secret-0123456789}
   development-subscriptions: true
   development-unlimited-usage: true
 logging:

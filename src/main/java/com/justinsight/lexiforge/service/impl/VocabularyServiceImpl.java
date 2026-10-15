@@ -62,7 +62,7 @@ public class VocabularyServiceImpl implements VocabularyService {
         entity.sourceType = request.sourceType() == null ? "MANUAL" : request.sourceType();
         entity.sourceId = request.sourceId() == null || request.sourceId().isBlank()
                 ? null : Long.parseLong(request.sourceId());
-        vocabulary.save(entity);
+        vocabulary.saveAndFlush(entity);
         createSchedules(userId, entity.id);
         return view(entity);
     }

@@ -38,13 +38,29 @@ const lookupDetails = ref<LookupDetails | null>(null)
 const lookupLoading = ref(false)
 const detailsLoading = ref(false)
 const collecting = ref(false)
-const popover = ref({ left: 24, top: 24 })
+const popover = ref({ left: 24, top: 24, maxHeight: innerHeight - 36 })
 
 const AUTO_TRANSLATE_DELAY = 900
 let timer: ReturnType<typeof setTimeout> | null = null
 let controller: AbortController | null = null
 let version = 0
 let suppressWatch = false
+let lookupVersion = 0
+let lookupController: AbortController | null = null
+let detailsController: AbortController | null = null
+function closeLookup() {
+  lookupVersion += 1
+  lookupController?.abort(); lookupController = null
+  detailsController?.abort(); detailsController = null
+  lookup.value = null; lookupDetails.value = null
+  lookupLoading.value = false; detailsLoading.value = false; collecting.value = false
+}
+function outsideLookup(event: Event) {
+  const target = event.target
+  if (target instanceof Element && (target.closest('.lookup-popover') || target.closest('.source-editor') || target.closest('.translated-document'))) return
+  closeLookup()
+}
+function lookupKey(event: KeyboardEvent) { if (event.key === 'Escape') closeLookup() }
 const displayBuffer = createFrameText(text => {
   stale.value = false
   streamedText.value += text
@@ -55,15 +71,24 @@ const visibleTranslation = computed(() => streamedText.value || result.value?.tr
 const canLookup = computed(() => !!result.value && !stale.value && !translating.value && !translationError.value)
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', outsideLookup)
+  document.addEventListener('keydown', lookupKey)
+  window.addEventListener('resize', closeLookup)
   hydrateContinuation()
   await Promise.all([loadDomains(), loadHistory()])
 })
-onBeforeUnmount(invalidate)
+onBeforeUnmount(() => {
+  invalidate()
+  document.removeEventListener('pointerdown', outsideLookup)
+  document.removeEventListener('keydown', lookupKey)
+  window.removeEventListener('resize', closeLookup)
+})
 
 watch([source, sourceLanguage, targetLanguage, domainId], () => {
   if (suppressWatch) return
   version += 1
   displayBuffer.clear()
+  closeLookup()
   controller?.abort()
   controller = null
   translating.value = false
@@ -82,7 +107,9 @@ function requestId() {
 function hydrateContinuation() {
   const saved = sessionStorage.getItem('lexiforge:last-translation')
   if (!saved) return
-  try { selectHistory(JSON.parse(saved) as Translation) } finally { sessionStorage.removeItem('lexiforge:last-translation') }
+  try { selectHistory(JSON.parse(saved) as Translation) }
+  catch { /* 损坏的临时记录不影响翻译页启动。 */ }
+  finally { sessionStorage.removeItem('lexiforge:last-translation') }
 }
 async function loadDomains() {
   domainsLoading.value = true
@@ -119,6 +146,7 @@ async function translate(forceRefresh = false) {
   controller?.abort()
   const ownVersion = ++version
   displayBuffer.clear()
+  closeLookup()
   const aborter = new AbortController()
   controller = aborter
   lookup.value = null
@@ -162,8 +190,8 @@ function stop() {
   translating.value = false
   if (streamedText.value) translationError.value = '翻译已停止，当前内容未完成，不能查词或收藏'
 }
-function invalidate() { clearTimer(); displayBuffer.clear(); version += 1; controller?.abort(); controller = null }
-function compositionStart() { composing.value = true; clearTimer(); lookup.value = null }
+function invalidate() { clearTimer(); displayBuffer.clear(); closeLookup(); version += 1; controller?.abort(); controller = null }
+function compositionStart() { composing.value = true; clearTimer(); closeLookup() }
 function compositionEnd() { composing.value = false; schedule() }
 function swapLanguages() {
   invalidate()
@@ -242,30 +270,44 @@ function targetSelection(event: MouseEvent) {
 async function performLookup(side: Side, start: number, end: number, event: MouseEvent | KeyboardEvent) {
   if (!result.value) return
   if (end - start > 120) { message.warning('请选择不超过 120 个字符'); return }
+  closeLookup()
   const ownVersion = version
-  lookup.value = null
-  lookupDetails.value = null
+  const ownLookup = lookupVersion
+  const aborter = new AbortController()
+  lookupController = aborter
   lookupLoading.value = true
   if ('clientX' in event) positionPopover(event.clientX, event.clientY)
   try {
-    const response = await api.post<Lookup>(`/api/translations/${result.value.id}/lookups/v1`, { requestId: requestId(), side, start, end })
-    if (ownVersion === version) lookup.value = response.data
-  } finally { if (ownVersion === version) lookupLoading.value = false }
+    const response = await api.post<Lookup>(`/api/translations/${result.value.id}/lookups/v1`, { requestId: requestId(), side, start, end }, { signal: aborter.signal })
+    if (ownVersion === version && ownLookup === lookupVersion) lookup.value = response.data
+  } catch { /* 全局客户端显示错误；已取消的请求不提示、不覆盖状态。 */ }
+  finally { if (ownVersion === version && ownLookup === lookupVersion) lookupLoading.value = false }
 }
 function positionPopover(x: number, y: number) {
-  popover.value = { left: Math.max(12, Math.min(x, innerWidth - 372)), top: Math.max(12, Math.min(y + 14, innerHeight - 310)) }
+  const top = Math.max(12, Math.min(y + 14, innerHeight - 310))
+  popover.value = { left: Math.max(12, Math.min(x, innerWidth - 372)), top, maxHeight: innerHeight - top - 12 }
 }
 async function loadDetails() {
-  if (!lookup.value || lookupDetails.value) return
+  if (!lookup.value || lookupDetails.value || detailsLoading.value) return
+  const ownLookup = lookupVersion
+  const id = lookup.value.lookupId
+  const aborter = new AbortController()
+  detailsController = aborter
   detailsLoading.value = true
-  try { lookupDetails.value = (await api.post<LookupDetails>(`/api/lookups/${lookup.value.lookupId}/details/v1`, { requestId: requestId() })).data }
-  finally { detailsLoading.value = false }
+  try {
+    const data = (await api.post<LookupDetails>(`/api/lookups/${id}/details/v1`, { requestId: requestId() }, { signal: aborter.signal })).data
+    if (ownLookup === lookupVersion && lookup.value?.lookupId === id) lookupDetails.value = data
+  } catch { /* 保留简要解释及收藏，允许重试详情。 */ }
+  finally { if (ownLookup === lookupVersion) detailsLoading.value = false }
 }
 async function collect() {
-  if (!lookup.value?.collectable) return
+  if (!lookup.value?.collectable || collecting.value) return
+  const ownLookup = lookupVersion
+  const id = lookup.value.lookupId
   collecting.value = true
-  try { await api.post(`/api/vocabulary/lookup/${lookup.value.lookupId}/v1`); message.success('已加入个人词库') }
-  finally { collecting.value = false }
+  try { await api.post(`/api/vocabulary/lookup/${id}/v1`); message.success('已加入个人词库') }
+  catch { /* 全局客户端显示失败，保留解释。 */ }
+  finally { if (ownLookup === lookupVersion) collecting.value = false }
 }
 async function copyTranslation() {
   if (!canLookup.value || !result.value) return
@@ -279,7 +321,7 @@ async function copyTranslation() {
     <div><h1>AI 翻译</h1><p>先获得连贯译文，再按需点击或划选查词。</p></div>
     <a-button @click="historyOpen = true"><HistoryOutlined />最近翻译</a-button>
   </div>
-  <section class="translation-shell" aria-label="翻译工作区" @keydown.esc="lookup = null">
+  <section class="translation-shell" aria-label="翻译工作区" @keydown.esc="closeLookup">
     <div class="translation-toolbar">
       <div class="toolbar-group domain-control">
         <label for="domain-select">翻译场景</label>
@@ -324,8 +366,8 @@ async function copyTranslation() {
       </DocumentPane>
     </div>
   </section>
-  <div v-if="lookupLoading || lookup" class="lookup-popover" :style="{ left: `${popover.left}px`, top: `${popover.top}px` }" role="dialog" aria-label="语境解释">
-    <button class="close" aria-label="关闭" @click="lookup = null">×</button>
+  <div v-if="lookupLoading || lookup" class="lookup-popover" :style="{ left: `${popover.left}px`, top: `${popover.top}px`, maxHeight: `${popover.maxHeight}px`, overflowY: 'auto' }" role="dialog" aria-label="语境解释">
+    <button class="close" aria-label="关闭" @click="closeLookup">×</button>
     <a-spin v-if="lookupLoading" size="small" tip="正在理解当前语境…" />
     <template v-else-if="lookup">
       <strong class="selected">{{ lookup.selectedText }}</strong><div class="meaning">{{ lookup.meaning }}</div><p>{{ lookup.explanation }}</p>

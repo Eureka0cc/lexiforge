@@ -5,6 +5,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/login', component: () => import('./views/AuthView.vue'), meta: { public: true } },
+    { path: '/account-action', component: () => import('./views/AccountActionView.vue'), meta: { public: true } },
+    { path: '/account', component: () => import('./views/AccountView.vue') },
     { path: '/', redirect: '/translate' },
     { path: '/translate', component: () => import('./views/TranslateView.vue') },
     { path: '/domains', component: () => import('./views/DomainsView.vue') },

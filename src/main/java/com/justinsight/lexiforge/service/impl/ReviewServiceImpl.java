@@ -78,8 +78,10 @@ public class ReviewServiceImpl implements ReviewService {
         } catch (NumberFormatException exception) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "词条编号不正确");
         }
-        var word = jdbc.sql("SELECT * FROM vocabulary_item WHERE id=:id AND user_id=:uid")
-                .param("id", vocabularyId).param("uid", userId).query().singleRow();
+        var words = jdbc.sql("SELECT * FROM vocabulary_item WHERE id=:id AND user_id=:uid")
+                .param("id", vocabularyId).param("uid", userId).query().listOfRows();
+        if (words.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "VOCABULARY_NOT_FOUND", "词条不存在");
+        var word = words.getFirst();
         String expected = request.direction().equals("EN_TO_ZH")
                 ? (String) word.get("chinese_meaning") : (String) word.get("word");
         AiGateway.GradeResult grade = localGrade(request.direction(), expected, request.answer());
@@ -118,7 +120,7 @@ public class ReviewServiceImpl implements ReviewService {
         jdbc.sql("UPDATE review_schedule SET repetitions=:repetitions,interval_days=:days," +
                         "easiness=:easiness,due_at=:due,last_result=:result WHERE id=:id")
                 .param("repetitions", repetitions).param("days", interval)
-                .param("easiness", BigDecimal.valueOf(easiness)).param("due", due)
+                .param("easiness", BigDecimal.valueOf(easiness)).param("due", java.sql.Timestamp.from(due))
                 .param("result", grade.result()).param("id", schedule.get("id")).update();
         jdbc.sql("INSERT INTO review_attempt(id,session_id,user_id,vocabulary_id,direction," +
                         "answer,result,feedback,confused_with) " +

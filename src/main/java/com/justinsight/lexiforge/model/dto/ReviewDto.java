@@ -19,8 +19,8 @@ public final class ReviewDto {
                        String partOfSpeech, String ipa, String context) {}
     public record Session(String id, String direction, List<Item> items) {}
     public record AnswerRequest(
-            String vocabularyId,
-            @Pattern(regexp = "EN_TO_ZH|ZH_TO_EN") String direction,
+            @NotBlank @Pattern(regexp = "[0-9]+") String vocabularyId,
+            @NotBlank @Pattern(regexp = "EN_TO_ZH|ZH_TO_EN") String direction,
             @NotBlank @Size(max = 500) String answer
     ) {}
     public record AnswerResult(String result, String feedback, String expectedAnswer,

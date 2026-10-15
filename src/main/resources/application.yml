@@ -29,6 +29,12 @@ server:
 
 app:
   frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
+  auth:
+    secure-cookie: ${AUTH_SECURE_COOKIE:false}
+    mail:
+      mode: ${AUTH_MAIL_MODE:disabled}
+      secret: ${AUTH_MAIL_SECRET:}
+      directory: ../tmp/auth-mail
   snowflake:
     datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}
     worker-id: ${SNOWFLAKE_WORKER_ID:0}

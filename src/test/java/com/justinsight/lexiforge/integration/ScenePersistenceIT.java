@@ -31,6 +31,9 @@ class ScenePersistenceIT {
     @Autowired TranslationService translations;
     @Autowired SceneService scenes;
     @Autowired EntitlementService entitlements;
+    @Autowired com.justinsight.lexiforge.service.ai.LookupService lookups;
+    @Autowired VocabularyService vocabulary;
+    @Autowired ReviewService reviews;
     @Autowired JdbcClient jdbc;
     @MockitoBean AiGateway ai;
     private long userId;
@@ -116,5 +119,33 @@ class ScenePersistenceIT {
         assertThat(first.sceneSnapshot().configuration()).isEqualTo(config);
         assertThat(entitlements.usage(userId).translationsUsed()).isEqualTo(1);
         assertThat(domains.list(userId)).allMatch(DomainDto.DomainView::builtIn);
+    }
+
+    @Test void translationLookupCollectionAndReviewPersistWithOwnerIsolation() {
+        when(ai.lookup(any())).thenReturn(new AiGateway.LookupResult("解决", "处理当前问题", "解决", "address", "解决"));
+        var domain = domains.create(userId, new DomainDto.DomainRequest("技术文档", "面向工程师", config, null));
+        var translated = translations.translate(userId, new TranslationDto.Request("address the issue", "EN", "ZH", domain.id(), null, false));
+        var lookup = lookups.lookup(userId, Long.parseLong(translated.id()), new com.justinsight.lexiforge.model.dto.ai.LookupDto.Request(UUID.randomUUID().toString(), "SOURCE", 0, 7));
+        var collected = vocabulary.collectLookup(userId, Long.parseLong(lookup.lookupId()));
+        assertThat(vocabulary.collectLookup(userId, Long.parseLong(lookup.lookupId())).id()).isEqualTo(collected.id());
+        assertThat(vocabulary.list(userId)).hasSize(1);
+        var session = reviews.start(userId, new com.justinsight.lexiforge.model.dto.ReviewDto.StartRequest("EN_TO_ZH", 10));
+        assertThat(session.items()).extracting(com.justinsight.lexiforge.model.dto.ReviewDto.Item::vocabularyId).contains(collected.id());
+        var answer = new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(collected.id(), "EN_TO_ZH", "解决");
+        assertThat(reviews.answer(userId, Long.parseLong(session.id()), answer).result()).isEqualTo("CORRECT");
+        assertThat(jdbc.sql("SELECT count(*) FROM review_attempt WHERE user_id=:id").param("id", userId).query(Long.class).single()).isEqualTo(1);
+        reviews.finish(userId, Long.parseLong(session.id()));
+        assertThatThrownBy(() -> reviews.answer(userId, Long.parseLong(session.id()), answer)).hasMessageContaining("已结束");
+        long outsider = Long.parseLong(auth.register("outsider-" + UUID.randomUUID() + "@example.test", "Acceptance123!", "其他用户").user().id());
+        try {
+            assertThatThrownBy(() -> translations.one(outsider, Long.parseLong(translated.id()))).hasMessageContaining("不存在");
+            assertThatThrownBy(() -> vocabulary.collectLookup(outsider, Long.parseLong(lookup.lookupId()))).hasMessageContaining("不存在");
+            assertThat(vocabulary.list(outsider)).isEmpty();
+            var otherSession = reviews.start(outsider, new com.justinsight.lexiforge.model.dto.ReviewDto.StartRequest("EN_TO_ZH", 10));
+            assertThatThrownBy(() -> reviews.answer(outsider, Long.parseLong(otherSession.id()), answer)).hasMessageContaining("词条不存在");
+            assertThatThrownBy(() -> vocabulary.delete(outsider, Long.parseLong(collected.id()))).hasMessageContaining("不存在");
+        } finally { jdbc.sql("DELETE FROM app_user WHERE id=:id").param("id", outsider).update(); }
+        vocabulary.delete(userId, Long.parseLong(collected.id()));
+        assertThat(vocabulary.list(userId)).isEmpty();
     }
 }

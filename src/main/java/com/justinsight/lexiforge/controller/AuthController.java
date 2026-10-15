@@ -11,15 +11,18 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.beans.factory.annotation.Value;
 
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
     private static final String COOKIE = "lexiforge_refresh";
     private final AuthService service;
+    private final boolean secureCookie;
 
-    public AuthController(AuthService service) {
+    public AuthController(AuthService service, @Value("${app.auth.secure-cookie:false}") boolean secureCookie) {
         this.service = service;
+        this.secureCookie = secureCookie;
     }
 
     @PostMapping("/register/v1")
@@ -56,7 +59,7 @@ public class AuthController {
     private ApiResponse<AuthDto.AuthResponse> respond(AuthService.Tokens tokens,
                                                        HttpServletResponse response) {
         ResponseCookie cookie = ResponseCookie.from(COOKIE, tokens.refreshToken())
-                .httpOnly(true).sameSite("Lax").path("/api/auth")
+                .httpOnly(true).secure(secureCookie).sameSite("Lax").path("/api/auth")
                 .maxAge(tokens.refreshMaxAge()).build();
         response.addHeader("Set-Cookie", cookie.toString());
         return ApiResponse.ok(new AuthDto.AuthResponse(tokens.accessToken(), tokens.user()));
@@ -64,6 +67,6 @@ public class AuthController {
 
     private void clearCookie(HttpServletResponse response) {
         response.addHeader("Set-Cookie", ResponseCookie.from(COOKIE, "")
-                .httpOnly(true).path("/api/auth").maxAge(0).build().toString());
+                .httpOnly(true).secure(secureCookie).sameSite("Lax").path("/api/auth").maxAge(0).build().toString());
     }
 }

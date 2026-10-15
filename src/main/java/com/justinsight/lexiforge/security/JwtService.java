@@ -23,8 +23,11 @@ public class JwtService {
     }
 
     public String issue(UserEntity user) {
+        return issue(user, null);
+    }
+    public String issue(UserEntity user, Long sessionId) {
         Instant now = Instant.now();
-        return Jwts.builder().subject(user.id.toString()).claim("role", user.role)
+        return Jwts.builder().subject(user.id.toString()).claim("role", user.role).claim("sessionVersion", user.sessionVersion).claim("sid", sessionId)
                 .issuedAt(Date.from(now)).expiration(Date.from(now.plusSeconds(properties.accessMinutes() * 60)))
                 .signWith(key).compact();
     }
