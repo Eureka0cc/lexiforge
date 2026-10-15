@@ -38,18 +38,21 @@ public class AiTranslationController {
     private final ExecutorService executor;
     private final MeterRegistry metrics;
     private final long timeoutSeconds;
+    private final com.justinsight.lexiforge.service.ai.AiTaskRunner runner;
 
     public AiTranslationController(TranslationService translations, LookupService lookups,
                                    AiRequestService requests,
                                    @Qualifier("translationExecutor") ExecutorService executor,
                                    MeterRegistry metrics,
-                                   @Value("${app.ai.execution.timeout-seconds:90}") long timeoutSeconds) {
+                                   @Value("${app.ai.execution.timeout-seconds:90}") long timeoutSeconds,
+                                   com.justinsight.lexiforge.service.ai.AiTaskRunner runner) {
         this.translations = translations;
         this.lookups = lookups;
         this.requests = requests;
         this.executor = executor;
         this.metrics = metrics;
         this.timeoutSeconds = timeoutSeconds;
+        this.runner = runner;
     }
 
     @PostMapping(path = "/api/translations/stream/v1", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -89,14 +92,15 @@ public class AiTranslationController {
     @PostMapping("/api/translations/{id}/lookups/v1")
     public com.justinsight.lexiforge.common.ApiResponse<LookupDto.Response> lookup(
             @PathVariable long id, @Valid @RequestBody LookupDto.Request request) {
-        return com.justinsight.lexiforge.common.ApiResponse.ok(lookups.lookup(CurrentUser.id(), id, request));
+        long userId=CurrentUser.id();
+        return com.justinsight.lexiforge.common.ApiResponse.ok(runner.run(()->lookups.lookup(userId, id, request)));
     }
 
     @PostMapping("/api/lookups/{id}/details/v1")
     public com.justinsight.lexiforge.common.ApiResponse<LookupDto.DetailsResponse> details(
             @PathVariable long id, @Valid @RequestBody LookupDto.DetailsRequest request) {
-        return com.justinsight.lexiforge.common.ApiResponse.ok(
-                lookups.details(CurrentUser.id(), id, request.requestId()));
+        long userId=CurrentUser.id();
+        return com.justinsight.lexiforge.common.ApiResponse.ok(runner.run(()->lookups.details(userId, id, request.requestId())));
     }
 
     private void runTranslation(long userId, AiTranslationDto.StreamRequest request, SseEmitter emitter,

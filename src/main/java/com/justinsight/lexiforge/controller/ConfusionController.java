@@ -20,9 +20,11 @@ import java.util.List;
 @RequestMapping("/api/confusion-groups")
 public class ConfusionController {
     private final ConfusionService service;
+    private final com.justinsight.lexiforge.service.ai.AiTaskRunner runner;
 
-    public ConfusionController(ConfusionService service) {
+    public ConfusionController(ConfusionService service, com.justinsight.lexiforge.service.ai.AiTaskRunner runner) {
         this.service = service;
+        this.runner = runner;
     }
 
     @GetMapping("/v1")
@@ -46,7 +48,8 @@ public class ConfusionController {
     public ApiResponse<ConfusionDto.MnemonicView> mnemonic(
             @PathVariable long groupId,
             @Valid @RequestBody ConfusionDto.MnemonicRequest request) {
-        return ApiResponse.ok(service.createMnemonic(CurrentUser.id(), groupId, request));
+        long userId=CurrentUser.id();
+        return ApiResponse.ok(runner.run(()->service.createMnemonic(userId, groupId, request)));
     }
 
     @PatchMapping("/{groupId}/mnemonics/{mnemonicId}/v1")

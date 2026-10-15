@@ -18,15 +18,18 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/translations")
 public class TranslationController {
     private final TranslationService service;
+    private final com.justinsight.lexiforge.service.ai.AiTaskRunner runner;
 
-    public TranslationController(TranslationService service) {
+    public TranslationController(TranslationService service, com.justinsight.lexiforge.service.ai.AiTaskRunner runner) {
         this.service = service;
+        this.runner = runner;
     }
 
     @PostMapping("/v1")
     public ApiResponse<TranslationDto.View> translate(
             @Valid @RequestBody TranslationDto.Request request) {
-        return ApiResponse.ok(service.translate(CurrentUser.id(), request));
+        long userId=CurrentUser.id();
+        return ApiResponse.ok(runner.run(()->service.translate(userId, request)));
     }
 
     @GetMapping("/v1")

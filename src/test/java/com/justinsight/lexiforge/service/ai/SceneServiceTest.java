@@ -28,6 +28,7 @@ class SceneServiceTest {
     private final AiRequestService requests = mock(AiRequestService.class);
     private final SceneDraftRepository drafts = mock(SceneDraftRepository.class);
     private final EntitlementService entitlements = mock(EntitlementService.class);
+    private final AiUsageReservations reservations = mock(AiUsageReservations.class);
     private final TranslationService translations = mock(TranslationService.class);
     private final TranslationCacheService cache = mock(TranslationCacheService.class);
     private final SnowflakeIdGenerator ids = mock(SnowflakeIdGenerator.class);
@@ -44,10 +45,11 @@ class SceneServiceTest {
         when(ai.available()).thenReturn(true);
         when(ai.generateScene(anyString())).thenReturn(new SceneDto.Generated("芯片文档", config));
         when(ids.nextId()).thenReturn(99L);
+        when(reservations.reserve(anyLong(),any(),any())).thenReturn(900L);
         when(cache.model()).thenReturn("current-model");
         when(manager.getTransaction(any())).thenAnswer(ignored -> new SimpleTransactionStatus());
         service = new SceneService(ai, new AiTaskRunner(executor, 3), requests, drafts, entitlements,
-                translations, cache, ids, validation.getValidator(), manager);
+                translations, cache, ids, validation.getValidator(), manager, reservations);
     }
     @AfterEach void close() { executor.shutdownNow(); validation.close(); }
 
@@ -58,15 +60,15 @@ class SceneServiceTest {
         assertThat(result.description()).isEqualTo(request.description());
         assertThat(result.generationVersion()).isEqualTo("scene-generation-v1:current-model");
         verify(drafts).saveAndFlush(argThat(entity -> entity.userId.equals(7L)));
-        verify(entitlements).consume(eq(7L), eq(EntitlementService.UsageType.SCENE_GENERATION), any());
+        verify(reservations).reserve(eq(7L), eq(EntitlementService.UsageType.SCENE_GENERATION), any());
         verify(requests).succeed(eq(1L), eq(99L), any());
-        verify(entitlements, never()).release(anyLong(), any(), any());
+        verify(reservations, never()).release(anyLong());
     }
 
     @Test void failedPersistenceReleasesQuotaAndDoesNotReportSuccess() {
         when(drafts.saveAndFlush(any())).thenThrow(new IllegalStateException("数据库失败"));
         assertThatThrownBy(() -> service.generate(7, request)).hasMessage("数据库失败");
-        verify(entitlements).release(eq(7L), eq(EntitlementService.UsageType.SCENE_GENERATION), any());
+        verify(reservations).release(900L);
         verify(requests, never()).succeed(anyLong(), anyLong(), any());
         verify(manager).rollback(any());
     }
@@ -75,7 +77,7 @@ class SceneServiceTest {
         when(ai.generateScene(anyString())).thenReturn(new SceneDto.Generated("", config));
         assertThatThrownBy(() -> service.generate(7, request)).hasMessageContaining("有效场景");
         verify(drafts, never()).saveAndFlush(any());
-        verify(entitlements).release(eq(7L), eq(EntitlementService.UsageType.SCENE_GENERATION), any());
+        verify(reservations).release(900L);
     }
 
     @Test void replayUsesOwnedDraftWithoutCallingAiOrQuota() {
@@ -87,14 +89,14 @@ class SceneServiceTest {
         when(drafts.findByIdAndUserId(99L, 7L)).thenReturn(Optional.of(entity));
         assertThat(service.generate(7, request).configuration()).isEqualTo(config);
         verify(ai, never()).generateScene(any());
-        verify(entitlements, never()).consume(anyLong(), any(), any());
+        verify(reservations, never()).reserve(anyLong(), any(), any());
         assertThatThrownBy(() -> service.generate(8, request)).hasMessage("场景草稿不存在");
     }
 
     @Test void unavailableAiDoesNotConsumeOrProduceFakeDraft() {
         when(ai.available()).thenReturn(false);
         assertThatThrownBy(() -> service.generate(7, request)).hasMessage("AI 服务尚未配置");
-        verify(entitlements, never()).consume(anyLong(), any(), any());
+        verify(reservations, never()).reserve(anyLong(), any(), any());
         verify(drafts, never()).saveAndFlush(any());
     }
 }

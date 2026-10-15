@@ -48,6 +48,7 @@ class TranslationReuseTest {
     private final AiGateway ai = mock(AiGateway.class);
     private final SnowflakeIdGenerator ids = mock(SnowflakeIdGenerator.class);
     private final EntitlementService entitlements = mock(EntitlementService.class);
+    private final com.justinsight.lexiforge.service.ai.AiUsageReservations reservations = mock(com.justinsight.lexiforge.service.ai.AiUsageReservations.class);
     private final EventService events = mock(EventService.class);
     private final PlatformTransactionManager manager = mock(PlatformTransactionManager.class);
     private final WordDictionaryService dictionary = mock(WordDictionaryService.class);
@@ -70,6 +71,7 @@ class TranslationReuseTest {
         when(ai.available()).thenReturn(true);
         when(ai.translateStream(any(), any())).thenReturn(new AiGateway.TranslationResult("en", "地址", List.of(), List.of()));
         when(ids.nextId()).thenReturn(100L);
+        when(reservations.reserve(anyLong(),any(),any())).thenReturn(900L);
         when(manager.getTransaction(any())).thenAnswer(ignored -> new SimpleTransactionStatus());
         cache = newCache();
         fingerprint = cache.fingerprint(1, request, domain, List.of());
@@ -85,7 +87,7 @@ class TranslationReuseTest {
         assertThat(service.translate(1, request).id()).isEqualTo("20");
         assertThat(newService(newCache()).translate(1, request).id()).isEqualTo("20");
         verify(ai, never()).translateStream(any(), any());
-        verify(entitlements, never()).consume(anyLong(), any(), any());
+        verify(reservations, never()).reserve(anyLong(), any(), any());
         verify(translations, never()).save(any());
     }
 
@@ -104,7 +106,7 @@ class TranslationReuseTest {
         var refresh = new TranslationDto.Request("address", "EN", "ZH", "10", null, false, true);
         assertThat(service.translate(1, refresh).id()).isEqualTo("100");
         verify(ai).translateStream(any(), any());
-        verify(entitlements).consume(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
+        verify(reservations).reserve(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
         verify(manager).commit(any());
         assertThat(cache.find(fingerprint)).isEqualTo(100L);
     }
@@ -115,7 +117,7 @@ class TranslationReuseTest {
         when(ai.translateStream(any(), any())).thenThrow(new IllegalStateException("upstream failed"));
         var refresh = new TranslationDto.Request("address", "EN", "ZH", "10", null, false, true);
         assertThatThrownBy(() -> service.translate(1, refresh)).hasMessage("upstream failed");
-        verify(entitlements).release(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
+        verify(reservations).release(900L);
         verify(translations, never()).save(any());
         assertThat(cache.find(fingerprint)).isEqualTo(20L);
     }
@@ -125,7 +127,7 @@ class TranslationReuseTest {
         when(translations.save(any())).thenThrow(new IllegalStateException("database failed"));
         assertThatThrownBy(() -> service.translate(1, request)).hasMessage("database failed");
         verify(manager).rollback(any());
-        verify(entitlements).release(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
+        verify(reservations).release(900L);
         assertThat(cache.find(fingerprint)).isNull();
     }
 
@@ -168,7 +170,7 @@ class TranslationReuseTest {
         assertThat(view.translatedText()).isEqualTo("地址");
         assertThat(view.id()).isEqualTo("100");
         verify(ai).translateStream(any(), any());
-        verify(entitlements).consume(anyLong(), any(), any());
+        verify(reservations).reserve(anyLong(), any(), any());
         verify(translations).save(any());
         verify(events).track(eq(1L), eq("TRANSLATION_COMPLETED"), any());
         verify(dictionary, never()).lookup(any(), any(), any());
@@ -208,7 +210,7 @@ class TranslationReuseTest {
     void admissionFailureDoesNotFailTranslation() {
         doThrow(new IllegalStateException("admission failed")).when(dictionary).admit(any(), any(), any(), any());
         assertThat(service.translate(1, request).translatedText()).isEqualTo("地址");
-        verify(entitlements, never()).release(anyLong(), any(), any());
+        verify(reservations, never()).release(anyLong());
     }
 
     @Test
@@ -242,7 +244,7 @@ class TranslationReuseTest {
         assertThat(view.domainId()).isNull();
         assertThat(view.sceneSnapshot().name()).isEqualTo("草稿");
         verify(domains, never()).save(any());
-        verify(entitlements).consume(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
+        verify(reservations).reserve(eq(1L), eq(EntitlementService.UsageType.TRANSLATION), any());
     }
 
     @Test
@@ -275,6 +277,6 @@ class TranslationReuseTest {
 
     private TranslationService newService(TranslationCacheService value) {
         return new TranslationServiceImpl(translations, terms, domains, domainTerms, ai, ids,
-                entitlements, events, mapper, value, dictionary, manager);
+                entitlements, events, mapper, value, dictionary, manager, reservations);
     }
 }

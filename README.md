@@ -47,6 +47,17 @@ V9 将模拟渠道交易与本地订单、通知、权益分别持久化。HMAC-
 
 真实重启验收先执行 `mvn -B -Pintegration verify`，再运行 `./scripts/verify-billing-restart.ps1 -DatabaseUrl jdbc:postgresql://localhost:5432/lexiforge_acceptance_20261014`，按需传 `DatabaseUser/DatabasePassword`。脚本只允许明确命名的本机验收库，隐藏启动三次独立后端进程，验证支付和退款丢失通知后恢复，最后清理测试账户与自身进程。结果、服务日志写入工作区 `tmp/billing-restart/`。
 
+### AI 额度恢复与数据库恢复
+
+V10 的 `ai_usage_reservation` 持久化翻译、场景生成和查词预占。预占与计数在同一事务提交；结果和预占确认在同一事务提交。失败释放幂等，过期恢复退回原计量日期；已经释放的预占不能再保存迟到结果。已确认的结果不会被异常补偿重复退额。复习判分和记忆法仍在各自结果事务中计量，事务失败/进程断开由数据库回滚。
+
+同一用户同一内容的有效预占由数据库唯一索引互斥，租期内阻止跨进程重复发起；过期后允许重试，旧请求的迟到写入被拒绝。正常完成后复用个人历史。预占期限为 `max(120, AI_TIMEOUT_SECONDS + 60)` 秒，默认 150 秒，默认每 30 秒恢复过期项。请求状态清理在更晚的 `max(180, AI_TIMEOUT_SECONDS + 120)` 秒后执行，默认每 60 秒检查。同步翻译、查词、场景、判分及记忆法均使用有限执行资源，不在排队期间预扣额度。
+
+- 真实中断验收：`./scripts/verify-ai-crash.ps1 -DatabaseUrl jdbc:postgresql://localhost:5432/lexiforge_acceptance_20261014`。使用本机 Node HTTP 故障注入服务，观察上游请求和预占后强制结束后端；重启后等待真实时钟过期，不修改期限。仅用于故障恢复，不调用真实模型，也不证明翻译质量。覆盖完整清理期限，运行约 4 分钟。报告/日志写入 `tmp/ai-crash/`。
+- 数据库备份恢复：`./scripts/verify-database-recovery.ps1`，按需传 `DatabasePort/DatabaseUser/DatabasePassword`。脚本创建两个全新的随机命名验收库，通过应用生成账户、场景、词库和 Sandbox 订单，补入标注为 fixture 的历史数据。停止写入后实际执行 `pg_dump`/`pg_restore`，比较所有表的行数/全列校验，启动恢复库验证业务并退款。最后仅清理本脚本创建的库与进程；备份、校验清单和报告保留在 `tmp/database-recovery/`。不连接现有业务库。
+
+这些检查不替代版本回退、完整连续负载、真实 AI 20 并发和质量评测，未通过的门槛继续在实施台账跟踪。
+
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
 ## 功能特性

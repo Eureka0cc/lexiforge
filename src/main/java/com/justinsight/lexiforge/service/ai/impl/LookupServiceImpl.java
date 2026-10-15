@@ -26,16 +26,22 @@ public class LookupServiceImpl implements LookupService {
     private final SnowflakeIdGenerator ids;
     private final EntitlementService entitlements;
     private final AiRequestService requests;
+    private final com.justinsight.lexiforge.service.ai.AiUsageReservations reservations;
+    private final org.springframework.transaction.support.TransactionTemplate transaction;
 
     public LookupServiceImpl(TranslationRepository translations, TranslationLookupRepository lookups,
                              AiGateway ai, SnowflakeIdGenerator ids, EntitlementService entitlements,
-                             AiRequestService requests) {
+                             AiRequestService requests,
+                             com.justinsight.lexiforge.service.ai.AiUsageReservations reservations,
+                             org.springframework.transaction.PlatformTransactionManager manager) {
         this.translations = translations;
         this.lookups = lookups;
         this.ai = ai;
         this.ids = ids;
         this.entitlements = entitlements;
         this.requests = requests;
+        this.reservations=reservations;
+        this.transaction=new org.springframework.transaction.support.TransactionTemplate(manager);
     }
 
     @Override
@@ -70,24 +76,32 @@ public class LookupServiceImpl implements LookupService {
         if (!lookup.detailsLoaded) {
             TranslationEntity translation = translations.findByIdAndUserId(lookup.translationId, userId)
                     .orElseThrow(this::translationMissing);
-            LocalDate usageDate = LocalDate.now(ZoneId.of("Asia/Shanghai"));
-            entitlements.consume(userId, EntitlementService.UsageType.LOOKUP);
+            long reservation=reservations.reserve(userId, EntitlementService.UsageType.LOOKUP,"lookup-details:"+lookupId);
             AiGateway.LookupDetailsResult result;
             try {
+                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+                var current=owned(userId,lookupId);
+                if (current.detailsLoaded) {
+                    reservations.release(reservation);
+                    requests.succeed(execution.id(),lookupId,execution.startedAt());
+                    return detailsView(current);
+                }
                 result = ai.lookupDetails(new AiGateway.LookupDetailsPrompt(
                         translation.sourceText, translation.translatedText, lookup.selectedText,
                         lookup.meaning, lookup.learningWord));
-            } catch (RuntimeException exception) {
-                entitlements.release(userId, EntitlementService.UsageType.LOOKUP, usageDate);
-                throw exception;
-            }
+                if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
             lookup.ipa = emptyToNull(result.ipa());
             lookup.partOfSpeech = emptyToNull(result.partOfSpeech());
             lookup.exampleSentence = result.exampleSentence();
             lookup.exampleTranslation = result.exampleTranslation();
             lookup.detailsLoaded = true;
             lookup.updatedAt = Instant.now();
-            lookups.save(lookup);
+                transaction.executeWithoutResult(status->{
+                    lookups.saveAndFlush(lookup);
+                    reservations.commit(reservation,lookupId);
+                    requests.succeed(execution.id(),lookupId,execution.startedAt());
+                });
+            } catch (RuntimeException exception) { release(reservation,exception); throw exception; }
         }
         requests.succeed(execution.id(), lookup.id, execution.startedAt());
         return detailsView(lookup);
@@ -105,18 +119,18 @@ public class LookupServiceImpl implements LookupService {
     private TranslationLookupEntity create(long userId, TranslationEntity translation,
                                       LookupDto.Request request, String text) {
         ensureAiAvailable();
-        LocalDate usageDate = LocalDate.now(ZoneId.of("Asia/Shanghai"));
-        entitlements.consume(userId, EntitlementService.UsageType.LOOKUP);
+        long reservation=reservations.reserve(userId, EntitlementService.UsageType.LOOKUP,
+                "lookup:"+translation.id+":"+request.side()+":"+request.start()+":"+request.end());
         String selected = text.substring(request.start(), request.end());
         AiGateway.LookupResult result;
         try {
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+            var prior=lookups.findByTranslationIdAndSideAndSelectionStartAndSelectionEnd(translation.id,request.side(),request.start(),request.end());
+            if (prior.isPresent()) { reservations.release(reservation); return prior.get(); }
             result = ai.lookup(new AiGateway.LookupPrompt(
                     translation.sourceText, translation.translatedText, request.side(), selected,
                     paragraph(text, request.start(), request.end()), request.start(), request.end()));
-        } catch (RuntimeException exception) {
-            entitlements.release(userId, EntitlementService.UsageType.LOOKUP, usageDate);
-            throw exception;
-        }
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
         TranslationLookupEntity entity = new TranslationLookupEntity();
         entity.id = ids.nextId();
         entity.userId = userId;
@@ -130,7 +144,19 @@ public class LookupServiceImpl implements LookupService {
         entity.counterpartText = emptyToNull(result.counterpartText());
         entity.learningWord = englishLearningWord(result.learningWord());
         entity.chineseMeaning = emptyToNull(result.chineseMeaning());
-        return lookups.save(entity);
+            return transaction.execute(status->{
+                var saved=lookups.saveAndFlush(entity);
+                reservations.commit(reservation,saved.id);
+                return saved;
+            });
+        } catch (RuntimeException exception) { release(reservation,exception); throw exception; }
+    }
+
+    private void release(long reservation,RuntimeException failure) {
+        boolean interrupted=Thread.interrupted();
+        try { reservations.release(reservation); }
+        catch (RuntimeException compensation) { failure.addSuppressed(compensation); }
+        finally { if (interrupted) Thread.currentThread().interrupt(); }
     }
 
     private void validateSelection(String text, int start, int end) {

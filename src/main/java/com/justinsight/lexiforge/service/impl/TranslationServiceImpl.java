@@ -47,6 +47,7 @@ public class TranslationServiceImpl implements TranslationService {
     private final TranslationCacheService cache;
     private final WordDictionaryService dictionary;
     private final TransactionTemplate transaction;
+    private final com.justinsight.lexiforge.service.ai.AiUsageReservations reservations;
 
     public TranslationServiceImpl(TranslationRepository translations, TranslationTermRepository terms,
                                    DomainRepository domains, DomainTermRepository domainTerms,
@@ -54,7 +55,8 @@ public class TranslationServiceImpl implements TranslationService {
                                    EntitlementService entitlements, EventService events,
                                    ObjectMapper objectMapper, TranslationCacheService cache,
                                    WordDictionaryService dictionary,
-                                   PlatformTransactionManager transactionManager) {
+                                   PlatformTransactionManager transactionManager,
+                                   com.justinsight.lexiforge.service.ai.AiUsageReservations reservations) {
         this.translations = translations;
         this.terms = terms;
         this.domains = domains;
@@ -67,6 +69,7 @@ public class TranslationServiceImpl implements TranslationService {
         this.cache = cache;
         this.dictionary = dictionary;
         this.transaction = new TransactionTemplate(transactionManager);
+        this.reservations = reservations;
     }
 
     @Override
@@ -123,9 +126,18 @@ public class TranslationServiceImpl implements TranslationService {
             }
         }
         ensureAiAvailable();
-        LocalDate usageDate = LocalDate.now(ZoneId.of("Asia/Shanghai"));
-        entitlements.consume(userId, EntitlementService.UsageType.TRANSLATION, usageDate);
+        long reservation = reservations.reserve(userId, EntitlementService.UsageType.TRANSLATION, "translation:"+fingerprint);
         try {
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
+            // Another process may have committed between the first cache check and reservation.
+            if (!request.forceRefresh()) {
+                var prior=translations.findFirstByUserIdAndRequestFingerprintOrderByCreatedAtDescIdDesc(userId,fingerprint);
+                if (prior.isPresent()) {
+                    reservations.release(reservation);
+                    cache.remember(fingerprint,prior.get().id);
+                    return view(prior.get(),domain.medicalDisclaimer);
+                }
+            }
             AiGateway.TranslationResult result = ai.translateStream(new AiGateway.TranslationPrompt(
                     request.sourceText(), request.sourceLanguage(), request.targetLanguage(),
                     domain.name, domain.description, glossary, request.context(), false,
@@ -134,15 +146,18 @@ public class TranslationServiceImpl implements TranslationService {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_INVALID_RESPONSE", "AI 未返回有效译文，请重试");
             }
             if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException("翻译已取消");
-            TranslationEntity saved = transaction.execute(status ->
-                    persist(userId, request, domain, result, fingerprint, cache.model(), "TRANSLATION_COMPLETED"));
+            TranslationEntity saved = transaction.execute(status -> {
+                var entity=persist(userId, request, domain, result, fingerprint, cache.model(), "TRANSLATION_COMPLETED");
+                reservations.commit(reservation,entity.id);
+                return entity;
+            });
             // Populate only after the database transaction has committed successfully.
             cache.remember(fingerprint, saved.id);
             return view(saved, domain.medicalDisclaimer);
         } catch (RuntimeException exception) {
             boolean interrupted = Thread.interrupted();
             try {
-                entitlements.release(userId, EntitlementService.UsageType.TRANSLATION, usageDate);
+                reservations.release(reservation);
             } catch (RuntimeException releaseFailure) {
                 exception.addSuppressed(releaseFailure);
             } finally {

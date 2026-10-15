@@ -31,14 +31,16 @@ public class SceneService {
     private final Validator validator;
     private final TransactionTemplate transaction;
     private final ObjectMapper json = new ObjectMapper();
+    private final AiUsageReservations reservations;
 
     public SceneService(AiGateway ai, AiTaskRunner runner, AiRequestService requests,
                         SceneDraftRepository drafts, EntitlementService entitlements,
                         TranslationService translations, TranslationCacheService cache,
-                        SnowflakeIdGenerator ids, Validator validator, PlatformTransactionManager manager) {
+                        SnowflakeIdGenerator ids, Validator validator, PlatformTransactionManager manager, AiUsageReservations reservations) {
         this.ai = ai; this.runner = runner; this.requests = requests; this.drafts = drafts;
         this.entitlements = entitlements; this.translations = translations; this.cache = cache;
         this.ids = ids; this.validator = validator; this.transaction = new TransactionTemplate(manager);
+        this.reservations = reservations;
     }
 
     public SceneDto.Draft generate(long userId, SceneDto.GenerateRequest request) {
@@ -49,12 +51,12 @@ public class SceneService {
         var execution = requests.begin(userId, request.requestId(), "SCENE_GENERATION", request.description());
         if (execution.replay()) return view(drafts.findByIdAndUserId(execution.resultId(), userId)
                 .orElseThrow(() -> new ApiException(HttpStatus.NOT_FOUND, "SCENE_DRAFT_NOT_FOUND", "场景草稿不存在")));
-        LocalDate date = LocalDate.now(ZoneId.of("Asia/Shanghai"));
-        boolean consumed = false;
+        Long reservation = null;
         try {
             if (!ai.available()) throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE, "AI_NOT_CONFIGURED", "AI 服务尚未配置");
-            entitlements.consume(userId, EntitlementService.UsageType.SCENE_GENERATION, date);
-            consumed = true;
+            reservation = reservations.reserve(userId, EntitlementService.UsageType.SCENE_GENERATION, "scene:"+execution.id());
+            long reservedId=reservation;
+            if (Thread.currentThread().isInterrupted()) throw new java.util.concurrent.CancellationException();
             var result = ai.generateScene(request.description());
             if (result == null || result.configuration() == null || !validator.validate(result).isEmpty()) {
                 throw new ApiException(HttpStatus.BAD_GATEWAY, "AI_INVALID_SCENE", "AI 未返回有效场景，请重试");
@@ -67,13 +69,14 @@ public class SceneService {
             entity.generationVersion = SceneDto.GENERATION_VERSION + ":" + cache.model();
             return transaction.execute(status -> {
                 drafts.saveAndFlush(entity);
+                reservations.commit(reservedId,entity.id);
                 requests.succeed(execution.id(), entity.id, execution.startedAt());
                 return view(entity);
             });
         } catch (RuntimeException exception) {
             boolean interrupted = Thread.interrupted();
             try {
-                if (consumed) entitlements.release(userId, EntitlementService.UsageType.SCENE_GENERATION, date);
+                if (reservation!=null) reservations.release(reservation);
                 requests.fail(execution.id(), "SCENE_GENERATION_FAILED", execution.startedAt());
             } catch (RuntimeException compensationFailure) { exception.addSuppressed(compensationFailure); }
             finally { if (interrupted) Thread.currentThread().interrupt(); }
