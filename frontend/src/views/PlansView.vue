@@ -27,8 +27,16 @@ const plans = ref<Plan[]>([])
 const subscription = ref<Subscription | null>(null)
 const loading = ref(false)
 const loadError = ref(false)
-const activating = ref(false)
-const currentPlanCode = computed(() => subscription.value?.status === 'ACTIVE' ? subscription.value.planCode : 'FREE')
+interface BillingOrder { id: string; channel: string; cycle: string; planName: string; amountMinor: number; currency: string; status: string; tradeNo?: string; createdAt: string; expiresAt: string }
+const billing = ref({ enabled: false, mode: 'DISABLED', officialChannelConnected: false })
+const orders = ref<BillingOrder[]>([])
+const checkoutOpen = ref(false)
+const cycle = ref('MONTH')
+const channel = ref('ALIPAY_SIMULATOR')
+const busy = ref('')
+let draft: { key: string; requestId: string } | null = null
+const currentPlanCode = computed(() => subscription.value?.status === 'ACTIVE' && (!subscription.value.expiresAt || Date.parse(subscription.value.expiresAt) > Date.now()) ? subscription.value.planCode : 'FREE')
+const statusLabel: Record<string, string> = { PENDING: '待支付', PAID: '已支付', REFUNDED: '已退款', CANCELLED: '已取消' }
 
 onMounted(load)
 
@@ -36,12 +44,16 @@ async function load() {
   loading.value = true
   loadError.value = false
   try {
-    const [planResponse, subscriptionResponse] = await Promise.all([
+    const [planResponse, subscriptionResponse, configResponse, ordersResponse] = await Promise.all([
       api.get<Plan[]>('/api/plans/v1'),
       api.get<Subscription>('/api/subscriptions/v1'),
+      api.get<typeof billing.value>('/api/billing/config/v1'),
+      api.get<BillingOrder[]>('/api/billing/orders/v1'),
     ])
     plans.value = planResponse.data
     subscription.value = subscriptionResponse.data
+    billing.value = configResponse.data
+    orders.value = ordersResponse.data
   } catch {
     loadError.value = true
   } finally {
@@ -49,16 +61,36 @@ async function load() {
   }
 }
 
-async function activate() {
-  activating.value = true
+async function refreshOrders() {
+  const [orderResponse, subscriptionResponse] = await Promise.all([
+    api.get<BillingOrder[]>('/api/billing/orders/v1'), api.get<Subscription>('/api/subscriptions/v1'),
+  ])
+  orders.value = orderResponse.data; subscription.value = subscriptionResponse.data
+}
+async function createOrder() {
+  if (busy.value) return
+  busy.value = 'create'
+  const key = cycle.value + '|' + channel.value
+  if (!draft || draft.key !== key) draft = { key, requestId: crypto.randomUUID() }
   try {
-    subscription.value = (await api.post<Subscription>('/api/subscriptions/dev/activate/v1?days=30')).data
-    message.success('开发测试订阅已激活')
-  } catch {
-    message.info('测试订阅只在开发环境开放，未发生任何扣款')
-  } finally {
-    activating.value = false
-  }
+    await api.post('/api/billing/orders/v1', { requestId: draft.requestId, cycle: cycle.value, channel: channel.value })
+    draft = null; checkoutOpen.value = false
+    await refreshOrders()
+    message.success('Sandbox 订单已创建，请在订单中模拟支付')
+  } catch { /* 全局客户端展示错误；保留请求编号，重试不会重复创建订单。 */ }
+  finally { busy.value = '' }
+}
+async function act(order: BillingOrder, action: 'sandbox-pay' | 'sandbox-refund' | 'cancel' | 'query') {
+  if (busy.value) return
+  busy.value = order.id
+  try {
+    const path = `/api/billing/orders/${order.id}/${action === 'query' ? 'v1' : action + '/v1'}`
+    if (action === 'query') await api.get(path)
+    else await api.post(path)
+    await refreshOrders()
+    message.success(action === 'sandbox-refund' ? '模拟退款已确认' : action === 'sandbox-pay' ? '模拟支付结果已确认' : action === 'cancel' ? '订单已取消' : '订单状态已同步')
+  } catch { /* 保留订单，允许查询服务端状态或重试。 */ }
+  finally { busy.value = '' }
 }
 </script>
 
@@ -92,16 +124,37 @@ async function activate() {
     <div class="plan-grid feature-row"><span>记忆法版本</span><div v-for="plan in plans" :key="plan.id"><CheckOutlined />每组 {{ plan.mnemonicVersions }} 个</div></div>
 
     <footer class="plan-grid plan-actions">
-      <div><b>说明</b><span>当前版本的升级入口只用于验证权益流程。</span></div>
+      <div><b>Sandbox 订阅</b><span>月付 30 天 / 年付 365 天，手动续费。</span></div>
       <div v-for="plan in plans" :key="plan.id">
-        <a-button v-if="plan.code === currentPlanCode" disabled>正在使用</a-button>
-        <a-button v-else-if="plan.code === 'PRO'" type="primary" :loading="activating" @click="activate">开发模式试用 Pro</a-button>
+        <a-button v-if="plan.code === 'PRO'" type="primary" :disabled="!billing.enabled || !!busy" @click="checkoutOpen = true">{{ currentPlanCode === 'PRO' ? 'Sandbox 续费 Pro' : 'Sandbox 订阅 Pro' }}</a-button>
         <a-button v-else disabled>免费套餐</a-button>
       </div>
     </footer>
   </section>
 
-  <a-alert class="billing-note" type="info" show-icon message="当前不会发生真实扣款" description="支付宝和微信支付尚未接入；开发测试订阅只验证套餐权益。" />
+  <a-alert class="billing-note" type="info" show-icon :message="billing.enabled ? '本地 Sandbox：不会发生真实扣款' : 'Sandbox 支付未启用'" description="支付宝和微信均为本地模拟渠道，尚未连接官方 Sandbox。支付结果由服务端确认，退款撤销对应订单期限，保留其他订单和学习数据。" />
+  <p v-if="subscription?.expiresAt">当前权益到期时间：{{ new Date(subscription.expiresAt).toLocaleString() }}</p>
+  <section v-if="!loading && !loadError" class="billing-orders workspace-surface" aria-label="Sandbox 订单">
+    <h2>Sandbox 订单</h2>
+    <a-empty v-if="!orders.length" description="还没有订单" />
+    <article v-for="order in orders" :key="order.id" class="billing-order" :aria-label="`订单 ${order.id}`">
+      <div><strong>{{ order.planName }} · {{ order.cycle === 'ANNUAL' ? '年付' : '月付' }}</strong><a-tag>{{ statusLabel[order.status] || order.status }}</a-tag></div>
+      <p>{{ order.channel === 'ALIPAY_SIMULATOR' ? '支付宝本地模拟' : '微信本地模拟' }} · ¥{{ (order.amountMinor / 100).toFixed(2) }} <span class="mono">{{ order.id }}</span></p>
+      <div class="order-actions">
+        <a-button v-if="order.status === 'PENDING'" type="primary" :disabled="!!busy" @click="act(order, 'sandbox-pay')">模拟支付</a-button>
+        <a-button :disabled="!!busy" @click="act(order, 'query')">查询状态</a-button>
+        <a-button v-if="order.status === 'PENDING'" :disabled="!!busy" @click="act(order, 'cancel')">取消订单</a-button>
+        <a-popconfirm v-if="order.status === 'PAID'" title="确认整单模拟退款并撤销对应期限？" ok-text="确认退款" cancel-text="取消" @confirm="act(order, 'sandbox-refund')"><a-button danger :disabled="!!busy">模拟退款</a-button></a-popconfirm>
+      </div>
+    </article>
+  </section>
+  <a-modal v-model:open="checkoutOpen" title="创建 Sandbox 订阅订单" :confirm-loading="busy === 'create'" ok-text="创建订单" cancel-text="取消" :closable="!busy" :mask-closable="!busy" @ok="createOrder">
+    <a-form layout="vertical">
+      <a-form-item label="订阅周期"><a-radio-group v-model:value="cycle" :disabled="!!busy"><a-radio value="MONTH">月付（30 天）</a-radio><a-radio value="ANNUAL">年付（365 天）</a-radio></a-radio-group></a-form-item>
+      <a-form-item label="模拟渠道"><a-radio-group v-model:value="channel" :disabled="!!busy"><a-radio value="ALIPAY_SIMULATOR">支付宝本地模拟</a-radio><a-radio value="WECHAT_SIMULATOR">微信本地模拟</a-radio></a-radio-group></a-form-item>
+      <p>¥{{ cycle === 'ANNUAL' ? plans.find(p => p.code === 'PRO')?.annualPrice : plans.find(p => p.code === 'PRO')?.monthlyPrice }}，无需真实付款。创建订单后可模拟支付。</p>
+    </a-form>
+  </a-modal>
 </template>
 
 <style scoped>
@@ -127,4 +180,5 @@ async function activate() {
 .plan-actions > div:first-child span { margin-top: 4px; color: var(--color-text-secondary); font-size: 11px; }
 .plan-actions .ant-btn { width: 100%; }
 .billing-note { margin-top: 16px; }
+.billing-orders{margin-top:24px;padding:20px}.billing-orders h2{font-size:18px}.billing-order{padding:16px 0;border-top:1px solid var(--color-border)}.billing-order>div:first-child{display:flex;gap:12px;flex-wrap:wrap}.billing-order p{color:var(--color-text-secondary);overflow-wrap:anywhere}.order-actions{display:flex;gap:8px;flex-wrap:wrap}
 </style>

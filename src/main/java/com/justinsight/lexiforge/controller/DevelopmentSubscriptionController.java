@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/subscriptions/dev")
 @Profile("dev")
+@org.springframework.boot.autoconfigure.condition.ConditionalOnProperty(name="app.development-subscriptions",havingValue="true")
 public class DevelopmentSubscriptionController {
     private final SubscriptionService service;
 

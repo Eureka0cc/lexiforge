@@ -29,7 +29,7 @@ public class SubscriptionServiceImpl implements SubscriptionService {
         int boundedDays = Math.max(1, Math.min(days, 365));
         jdbc.sql("UPDATE subscription SET plan_code='PRO',status='ACTIVE',starts_at=:starts," +
                         "expires_at=:expires,updated_at=now() WHERE user_id=:uid")
-                .param("starts", now).param("expires", now.plus(boundedDays, ChronoUnit.DAYS))
+                .param("starts", java.sql.Timestamp.from(now)).param("expires", java.sql.Timestamp.from(now.plus(boundedDays, ChronoUnit.DAYS)))
                 .param("uid", userId).update();
         return view(userId);
     }

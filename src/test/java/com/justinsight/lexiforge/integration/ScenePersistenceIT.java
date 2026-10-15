@@ -35,6 +35,8 @@ class ScenePersistenceIT {
     @Autowired VocabularyService vocabulary;
     @Autowired ReviewService reviews;
     @Autowired JdbcClient jdbc;
+    @Autowired com.justinsight.lexiforge.service.billing.BillingService billing;
+    @Autowired org.springframework.context.ApplicationContext context;
     @MockitoBean AiGateway ai;
     private long userId;
     private final SceneDto.Config config = new SceneDto.Config("嵌入式", "数据手册", "工程师", "简洁严谨", List.of("保留寄存器名"), "不额外解释");
@@ -69,6 +71,14 @@ class ScenePersistenceIT {
         assertThat(successful).isEqualTo(1);
         assertThat(jdbc.sql("SELECT count(*) FROM information_schema.columns WHERE table_name='translation' AND column_name='scene_snapshot_json'")
                 .query(Long.class).single()).isEqualTo(1);
+    }
+
+    @Test void defaultProfileDisablesPaymentSimulationAndDirectSubscriptionActivation() {
+        assertThat(billing.config().enabled()).isFalse();
+        assertThat(context.getBeansOfType(com.justinsight.lexiforge.controller.SandboxBillingController.class)).isEmpty();
+        assertThat(context.getBeansOfType(com.justinsight.lexiforge.controller.DevelopmentSubscriptionController.class)).isEmpty();
+        assertThatThrownBy(()->billing.create(userId,new com.justinsight.lexiforge.model.dto.BillingDto.Create("disabled","MONTH","ALIPAY_SIMULATOR")))
+                .hasMessageContaining("未启用");
     }
 
     @Test void generatingSameRequestReplaysPersistentDraftAndConsumesOnlyOnce() {

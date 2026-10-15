@@ -35,6 +35,18 @@
 
 复习 V8 迁移持久化本轮题目与标准答案快照。同题同答案重试返回已保存结果，修改答案的重复提交返回冲突，不重复判分或推进计划。迁移会结束此前未记录题目成员的活动会话，升级后需重新开始一轮；已有学习记录保留。
 
+### 本地 Sandbox 订单
+
+按用户当前范围，仅本地模拟，暂不连接官方支付宝/微信 Sandbox。`dev` 默认启用 `BILLING_MODE=local-sandbox`；“套餐与用量”支持创建月付（30 天）/年付（365 天）订单、模拟支付、手动续费、整单模拟退款、查询和取消。价格和期限由服务端保存快照，前端不直接激活权益。原开发直开订阅接口默认关闭。
+
+V9 将模拟渠道交易与本地订单、通知、权益分别持久化。HMAC-SHA256 验证本地通知，不属于支付宝 RSA/微信官方验签；`BILLING_SECRET` 至少 32 个字符，开发默认值仅限本机测试。支付/退款先提交渠道状态，再通知结算；查询和每 30 秒对账可补偿丢失通知。重复或乱序通知不重复授予权益。
+
+同一账户结算使用数据库行锁。续费接续有效期限；退款后按支付时间顺序重建未退款订单的期限，保留原有有效订阅基线与学习数据。默认配置为 `disabled`，模拟模式只允许 dev/test，支付与退款测试路由也只在这些 Profile 注册。
+
+接口均以 `/api/billing` 开头：`GET /config/v1`、`GET|POST /orders/v1`、`GET /orders/{id}/v1`（查询渠道并结算）、`POST /orders/{id}/cancel/v1`。测试路由为 `POST /orders/{id}/sandbox-pay/v1`、`/sandbox-refund/v1`；`notify=false` 用于丢失通知演练。公开的 `POST /sandbox-notify/v1` 必须提供签名。订单操作校验当前用户所有权。
+
+真实重启验收先执行 `mvn -B -Pintegration verify`，再运行 `./scripts/verify-billing-restart.ps1 -DatabaseUrl jdbc:postgresql://localhost:5432/lexiforge_acceptance_20261014`，按需传 `DatabaseUser/DatabasePassword`。脚本只允许明确命名的本机验收库，隐藏启动三次独立后端进程，验证支付和退款丢失通知后恢复，最后清理测试账户与自身进程。结果、服务日志写入工作区 `tmp/billing-restart/`。
+
 面向 IT 从业者的翻译与英语学习平台：AI 流式翻译、选区查词、生词本、间隔重复复习、易混词记忆法，一体化打通「翻译 → 学习 → 记忆」闭环。
 
 ## 功能特性
@@ -112,7 +124,7 @@ npm run dev
 
 | Profile | 说明 |
 |---|---|
-| `dev` | 开发默认：开发订阅接口、无限用量、DEBUG 日志 |
+| `dev` | 本地文件邮件、Sandbox 模拟支付、无限用量、DEBUG 日志；旧直接激活订阅接口默认关闭 |
 | `local` | 本地私有配置（不入库，自行创建）：AI 网关地址、密钥与模型 |
 
 未配置任何 AI key 时服务可正常启动，AI 功能返回 `AI_NOT_CONFIGURED`。

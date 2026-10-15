@@ -28,6 +28,9 @@ server:
   port: ${SERVER_PORT:8080}
 
 app:
+  billing:
+    mode: ${BILLING_MODE:disabled}
+    secret: ${BILLING_SECRET:}
   frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
   auth:
     secure-cookie: ${AUTH_SECURE_COOKIE:false}

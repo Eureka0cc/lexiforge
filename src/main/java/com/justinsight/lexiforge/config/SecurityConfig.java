@@ -48,6 +48,7 @@ public class SecurityConfig {
                 .authorizeHttpRequests(a -> a
                         .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                         .requestMatchers("/api/auth/**", "/api/plans/v1", "/actuator/health").permitAll()
+                        .requestMatchers(HttpMethod.POST,"/api/billing/sandbox-notify/v1").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN")
                         .requestMatchers("/actuator/**").hasRole("ADMIN")
                         .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()

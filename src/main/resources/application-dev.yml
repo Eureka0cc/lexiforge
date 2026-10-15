@@ -4,11 +4,14 @@ spring:
     activate:
       on-profile: dev
 app:
+  billing:
+    mode: ${BILLING_MODE:local-sandbox}
+    secret: ${BILLING_SECRET:development-only-billing-secret-0123456789}
   auth:
     mail:
       mode: ${AUTH_MAIL_MODE:file}
       secret: ${AUTH_MAIL_SECRET:development-only-auth-mail-secret-0123456789}
-  development-subscriptions: true
+  development-subscriptions: false
   development-unlimited-usage: true
 logging:
   level:
