@@ -74,7 +74,7 @@ async function start() {
 }
 
 async function submit() {
-  if (!answer.value.trim() || !current.value) return
+  if (loading.value || result.value || !answer.value.trim() || !current.value) return
   loading.value = true
   errorMessage.value = ''
   try {
@@ -93,10 +93,9 @@ async function submit() {
 }
 
 async function next() {
-  result.value = null
-  answer.value = ''
-  index.value += 1
-  if (index.value >= items.value.length) {
+  if (loading.value || !result.value) return
+  errorMessage.value = ''
+  if (index.value + 1 >= items.value.length) {
     loading.value = true
     try {
       await api.post(`/api/review-sessions/${sessionId.value}/finish/v1`)
@@ -104,11 +103,18 @@ async function next() {
       items.value = []
       sessionId.value = ''
       index.value = 0
+      result.value = null
+      answer.value = ''
+    } catch {
+      errorMessage.value = '完成状态保存失败，当前结果已保留，请重试'
     } finally {
       loading.value = false
     }
     return
   }
+  result.value = null
+  answer.value = ''
+  index.value += 1
   await nextTick()
   answerInput.value?.focus()
 }
@@ -189,7 +195,7 @@ function speak() {
           <div class="feedback-row"><span>解析</span><p>{{ result.feedback }}</p></div>
         </div>
         <a-alert v-if="result.confusedWith" type="warning" show-icon :message="`可能与 ${result.confusedWith} 混淆`" description="完成本轮后可加入易混词，集中比较拼写和使用语境。" />
-        <a-button type="primary" size="large" @click="next">{{ index === items.length - 1 ? '完成复习' : '下一题' }}</a-button>
+        <a-button type="primary" size="large" :loading="loading" @click="next">{{ index === items.length - 1 ? '完成复习' : '下一题' }}</a-button>
       </section>
     </section>
   </main>

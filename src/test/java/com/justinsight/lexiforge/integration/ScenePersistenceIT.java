@@ -148,4 +148,63 @@ class ScenePersistenceIT {
         vocabulary.delete(userId, Long.parseLong(collected.id()));
         assertThat(vocabulary.list(userId)).isEmpty();
     }
+
+    @Test void reviewRejectsUnselectedWordsAndUsesTheOriginalQuestionSnapshot() {
+        var first = vocabulary.create(userId, word("address", "解决"));
+        var second = vocabulary.create(userId, word("issue", "问题"));
+        var session = reviews.start(userId, new com.justinsight.lexiforge.model.dto.ReviewDto.StartRequest("EN_TO_ZH", 1));
+        var selected = session.items().getFirst();
+        var omitted = selected.vocabularyId().equals(first.id()) ? second : first;
+        assertThatThrownBy(() -> reviews.answer(userId, Long.parseLong(session.id()),
+                new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(omitted.id(), "EN_TO_ZH", omitted.chineseMeaning())))
+                .hasMessageContaining("不存在于本轮复习");
+        var original = selected.vocabularyId().equals(first.id()) ? first : second;
+        vocabulary.update(userId, Long.parseLong(original.id()), word(original.word(), "修改后的意思"));
+        var request = new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(original.id(), "EN_TO_ZH", original.chineseMeaning());
+        var result = reviews.answer(userId, Long.parseLong(session.id()), request);
+        assertThat(result.result()).isEqualTo("CORRECT");
+        assertThat(result.expectedAnswer()).isEqualTo(original.chineseMeaning());
+        assertThat(reviews.answer(userId, Long.parseLong(session.id()), request)).isEqualTo(result);
+        assertThatThrownBy(() -> reviews.answer(userId, Long.parseLong(session.id()),
+                new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(original.id(), "EN_TO_ZH", "换一个答案")))
+                .hasMessageContaining("本题已提交");
+        assertThat(entitlements.usage(userId).gradingsUsed()).isZero();
+    }
+
+    @Test void concurrentReviewRetryGradesAndAdvancesScheduleOnlyOnce() throws Exception {
+        var word = vocabulary.create(userId, word("address", "解决"));
+        var session = reviews.start(userId, new com.justinsight.lexiforge.model.dto.ReviewDto.StartRequest("EN_TO_ZH", 10));
+        when(ai.grade(any())).thenReturn(new AiGateway.GradeResult("CORRECT", "语境相符", ""));
+        var request = new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(word.id(), "EN_TO_ZH", "处理问题");
+        var executor = java.util.concurrent.Executors.newFixedThreadPool(2);
+        var start = new java.util.concurrent.CountDownLatch(1);
+        try {
+            java.util.concurrent.Callable<com.justinsight.lexiforge.model.dto.ReviewDto.AnswerResult> operation = () -> {
+                start.await(); return reviews.answer(userId, Long.parseLong(session.id()), request);
+            };
+            var first = executor.submit(operation); var second = executor.submit(operation); start.countDown();
+            assertThat(first.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(second.get(10, java.util.concurrent.TimeUnit.SECONDS));
+        } finally { executor.shutdownNow(); }
+        verify(ai, times(1)).grade(any());
+        assertThat(entitlements.usage(userId).gradingsUsed()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT count(*) FROM review_attempt WHERE user_id=:id").param("id", userId).query(Long.class).single()).isEqualTo(1);
+        assertThat(jdbc.sql("SELECT repetitions FROM review_schedule WHERE user_id=:id AND direction='EN_TO_ZH'").param("id", userId).query(Integer.class).single()).isEqualTo(1);
+    }
+
+    @Test void failedSemanticGradeRollsBackQuotaAndCanBeRetried() {
+        var word = vocabulary.create(userId, word("address", "解决"));
+        var session = reviews.start(userId, new com.justinsight.lexiforge.model.dto.ReviewDto.StartRequest("EN_TO_ZH", 10));
+        when(ai.grade(any())).thenThrow(new IllegalStateException("供应商失败"));
+        var request = new com.justinsight.lexiforge.model.dto.ReviewDto.AnswerRequest(word.id(), "EN_TO_ZH", "处理问题");
+        assertThatThrownBy(() -> reviews.answer(userId, Long.parseLong(session.id()), request)).hasMessage("供应商失败");
+        assertThat(entitlements.usage(userId).gradingsUsed()).isZero();
+        assertThat(jdbc.sql("SELECT count(*) FROM review_attempt WHERE user_id=:id").param("id", userId).query(Long.class).single()).isZero();
+        doReturn(new AiGateway.GradeResult("CORRECT", "正确", "")).when(ai).grade(any());
+        assertThat(reviews.answer(userId, Long.parseLong(session.id()), request).result()).isEqualTo("CORRECT");
+        assertThat(entitlements.usage(userId).gradingsUsed()).isEqualTo(1);
+    }
+
+    private com.justinsight.lexiforge.model.dto.VocabularyDto.Request word(String word, String meaning) {
+        return new com.justinsight.lexiforge.model.dto.VocabularyDto.Request(word, "v.", "", meaning, "", "", "", "MANUAL", null);
+    }
 }

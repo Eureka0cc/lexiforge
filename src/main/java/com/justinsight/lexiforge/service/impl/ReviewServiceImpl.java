@@ -23,13 +23,16 @@ public class ReviewServiceImpl implements ReviewService {
     private final SnowflakeIdGenerator ids;
     private final AiGateway ai;
     private final EntitlementService entitlements;
+    private final com.justinsight.lexiforge.service.ai.AiTaskRunner tasks;
+    private final tools.jackson.databind.ObjectMapper json = new tools.jackson.databind.ObjectMapper();
 
     public ReviewServiceImpl(JdbcClient jdbc, SnowflakeIdGenerator ids, AiGateway ai,
-                             EntitlementService entitlements) {
+                             EntitlementService entitlements, com.justinsight.lexiforge.service.ai.AiTaskRunner tasks) {
         this.jdbc = jdbc;
         this.ids = ids;
         this.ai = ai;
         this.entitlements = entitlements;
+        this.tasks = tasks;
     }
 
     @Override
@@ -60,6 +63,14 @@ public class ReviewServiceImpl implements ReviewService {
                             prompt, row.getString("part_of_speech"), row.getString("ipa"),
                             row.getString("example_sentence"));
                 }).list();
+        for (var item : items) {
+            jdbc.sql("""
+                    INSERT INTO review_session_item(session_id,vocabulary_id,direction,word_text,expected_answer,part_of_speech,context)
+                    SELECT :sid,id,:direction,word,CASE WHEN :direction='EN_TO_ZH' THEN chinese_meaning ELSE word END,part_of_speech,example_sentence
+                    FROM vocabulary_item WHERE id=:vid AND user_id=:uid
+                    """).param("sid", sessionId).param("direction", item.direction())
+                    .param("vid", Long.parseLong(item.vocabularyId())).param("uid", userId).update();
+        }
         return new ReviewDto.Session(Long.toString(sessionId), direction, items);
     }
 
@@ -67,10 +78,10 @@ public class ReviewServiceImpl implements ReviewService {
     @Transactional
     public ReviewDto.AnswerResult answer(long userId, long sessionId,
                                          ReviewDto.AnswerRequest request) {
-        int session = jdbc.sql("SELECT count(*) FROM review_session " +
-                        "WHERE id=:id AND user_id=:uid AND status='ACTIVE'")
-                .param("id", sessionId).param("uid", userId).query(Integer.class).single();
-        if (session == 0) throw sessionMissing("复习会话不存在或已结束");
+        var session = jdbc.sql("SELECT id FROM review_session " +
+                        "WHERE id=:id AND user_id=:uid AND status='ACTIVE' FOR UPDATE")
+                .param("id", sessionId).param("uid", userId).query().listOfRows();
+        if (session.isEmpty()) throw sessionMissing("复习会话不存在或已结束");
 
         long vocabularyId;
         try {
@@ -78,19 +89,23 @@ public class ReviewServiceImpl implements ReviewService {
         } catch (NumberFormatException exception) {
             throw new ApiException(HttpStatus.BAD_REQUEST, "BAD_REQUEST", "词条编号不正确");
         }
-        var words = jdbc.sql("SELECT * FROM vocabulary_item WHERE id=:id AND user_id=:uid")
-                .param("id", vocabularyId).param("uid", userId).query().listOfRows();
-        if (words.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "VOCABULARY_NOT_FOUND", "词条不存在");
-        var word = words.getFirst();
-        String expected = request.direction().equals("EN_TO_ZH")
-                ? (String) word.get("chinese_meaning") : (String) word.get("word");
+        var members = jdbc.sql("SELECT * FROM review_session_item WHERE session_id=:sid AND vocabulary_id=:vid AND direction=:direction")
+                .param("sid", sessionId).param("vid", vocabularyId).param("direction", request.direction()).query().listOfRows();
+        if (members.isEmpty()) throw new ApiException(HttpStatus.NOT_FOUND, "REVIEW_ITEM_NOT_FOUND", "词条不存在于本轮复习中");
+        var word = members.getFirst();
+        if (word.get("response_json") != null) {
+            if (!request.answer().trim().equals(word.get("answer_text")))
+                throw new ApiException(HttpStatus.CONFLICT, "REVIEW_ALREADY_ANSWERED", "本题已提交，请继续下一题");
+            return json.readValue((String) word.get("response_json"), ReviewDto.AnswerResult.class);
+        }
+        String expected = (String) word.get("expected_answer");
         AiGateway.GradeResult grade = localGrade(request.direction(), expected, request.answer());
         if (grade == null) {
             ensureAiAvailable();
             entitlements.consume(userId, EntitlementService.UsageType.GRADING);
-            grade = ai.grade(new AiGateway.GradePrompt(request.direction(),
-                    (String) word.get("word"), expected, request.answer(),
-                    (String) word.get("part_of_speech"), (String) word.get("example_sentence")));
+            grade = tasks.run(() -> ai.grade(new AiGateway.GradePrompt(request.direction(),
+                    (String) word.get("word_text"), expected, request.answer(),
+                    (String) word.get("part_of_speech"), (String) word.get("context"))));
         }
 
         int quality = switch (grade.result()) {
@@ -129,8 +144,12 @@ public class ReviewServiceImpl implements ReviewService {
                 .param("vid", vocabularyId).param("direction", request.direction())
                 .param("answer", request.answer()).param("result", grade.result())
                 .param("feedback", grade.feedback()).param("confused", grade.confusedWith()).update();
-        return new ReviewDto.AnswerResult(grade.result(), grade.feedback(), expected,
+        var response = new ReviewDto.AnswerResult(grade.result(), grade.feedback(), expected,
                 grade.confusedWith(), due.toString());
+        jdbc.sql("UPDATE review_session_item SET answer_text=:answer,response_json=:response,answered_at=now() WHERE session_id=:sid AND vocabulary_id=:vid AND direction=:direction")
+                .param("answer", request.answer().trim()).param("response", json.writeValueAsString(response))
+                .param("sid", sessionId).param("vid", vocabularyId).param("direction", request.direction()).update();
+        return response;
     }
 
     @Override
