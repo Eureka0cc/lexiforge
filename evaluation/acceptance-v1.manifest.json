@@ -1,0 +1,14 @@
+{
+  "version": "acceptance-v1",
+  "usage": "holdout: do not tune on these results",
+  "count": 200,
+  "scenePairs": 60,
+  "injections": 20,
+  "sha256": "3462270fd6cfe22d17874aeca6c95b9efc2015cd0b4977f82be80b26e3e920f9",
+  "categories": {
+    "general": 60,
+    "scene-domain": 60,
+    "scene-style": 60,
+    "injection": 20
+  }
+}
